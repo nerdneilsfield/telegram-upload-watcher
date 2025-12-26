@@ -21,7 +21,7 @@ def _format_elapsed(seconds: float) -> str:
     hours = total // 3600
     minutes = (total % 3600) // 60
     secs = total % 60
-    return f\"{hours:02d}:{minutes:02d}:{secs:02d}\"
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
 async def notify_loop(
@@ -42,7 +42,7 @@ async def notify_loop(
         url_pool,
         token_pool,
         chat_id,
-        f\"Watch started (elapsed {_format_elapsed(0)})\",
+        f"Watch started (elapsed {_format_elapsed(0)})",
         topic_id=topic_id,
     )
 
@@ -50,18 +50,18 @@ async def notify_loop(
         await asyncio.sleep(max(1, config.interval))
         elapsed = _format_elapsed(time.monotonic() - start)
         stats = queue.stats()
-        pending = stats.get(\"queued\", 0) + stats.get(\"failed\", 0)
+        pending = stats.get("queued", 0) + stats.get("failed", 0)
 
         await send_message(
             url_pool,
             token_pool,
             chat_id,
-            \"Watch status: elapsed {elapsed}, queued {queued}, sending {sending}, sent {sent}, failed {failed}\".format(
+            "Watch status: elapsed {elapsed}, queued {queued}, sending {sending}, sent {sent}, failed {failed}".format(
                 elapsed=elapsed,
-                queued=stats.get(\"queued\", 0),
-                sending=stats.get(\"sending\", 0),
-                sent=stats.get(\"sent\", 0),
-                failed=stats.get(\"failed\", 0),
+                queued=stats.get("queued", 0),
+                sending=stats.get("sending", 0),
+                sent=stats.get("sent", 0),
+                failed=stats.get("failed", 0),
             ),
             topic_id=topic_id,
         )
@@ -74,7 +74,7 @@ async def notify_loop(
                     url_pool,
                     token_pool,
                     chat_id,
-                    f\"Watch idle (elapsed {elapsed})\",
+                    f"Watch idle (elapsed {elapsed})",
                     topic_id=topic_id,
                 )
             last_pending = pending
