@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import mimetypes
 import os
 import zipfile
 from pathlib import Path
@@ -9,10 +10,9 @@ import aiohttp
 import requests
 import tqdm
 
+from .constants import IMAGE_EXTENSIONS
 from .net import get_proxy_from_env
 from .pools import TokenPool, UrlPool
-
-IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp")
 
 
 def test_token(api_url: str, bot_token: str) -> bool:
@@ -56,6 +56,11 @@ async def send_message(
             )
             await asyncio.sleep(retry_delay)
     return False
+
+
+def _guess_content_type(filename: str) -> str:
+    mime_type, _ = mimetypes.guess_type(filename)
+    return mime_type or "application/octet-stream"
 
 
 async def _send_message_once(
@@ -155,7 +160,7 @@ async def _send_media_group_once(
             file_key,
             image_data,
             filename=filename,
-            content_type="image/jpeg",
+            content_type=_guess_content_type(filename),
         )
     form_data.add_field("media", json.dumps(media_list))
 

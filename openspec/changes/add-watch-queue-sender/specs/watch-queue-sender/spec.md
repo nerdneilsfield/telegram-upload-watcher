@@ -83,3 +83,17 @@ The system SHALL compress oversized images to PNG when they exceed a configurabl
 #### Scenario: Greedy compression
 - **WHEN** PNG compression is required
 - **THEN** the system adjusts compression level from a starting level of 8 to reach the size threshold
+
+### Requirement: Send Pause
+The system SHALL support a configurable pause after sending a set number of images.
+
+#### Scenario: Pause after batch
+- **WHEN** the sender reaches the configured image count
+- **THEN** it pauses sending for the configured duration before continuing
+
+### Requirement: Default Config Example
+The system SHALL provide a default INI config example for Telegram setup.
+
+#### Scenario: Example config is available
+- **WHEN** a user checks the repository
+- **THEN** a sample config file shows the required fields and token format

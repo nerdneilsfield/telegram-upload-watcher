@@ -5,12 +5,15 @@ from pathlib import Path
 
 from .config import load_config
 from .pools import TokenPool, UrlPool
+from .queue import JsonlQueue
+from .sender import SenderConfig, sender_loop
 from .telegram import (
     send_images_from_dir,
     send_images_from_zip,
     send_message,
     test_token,
 )
+from .watcher import WatchConfig, watch_loop
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -106,6 +109,90 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable progress output",
     )
 
+    watch_parser = subparsers.add_parser(
+        "watch", parents=[common], help="Watch folder and send queued images"
+    )
+    watch_parser.add_argument(
+        "--watch-dir", type=Path, required=True, help="Folder to watch"
+    )
+    watch_parser.add_argument(
+        "--queue-file",
+        type=Path,
+        default=Path("queue.jsonl"),
+        help="Path to JSONL queue file",
+    )
+    watch_parser.add_argument(
+        "--recursive",
+        action="store_true",
+        help="Enable recursive scan",
+    )
+    watch_parser.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        help="Glob pattern to exclude (repeatable or comma-separated)",
+    )
+    watch_parser.add_argument(
+        "--scan-interval",
+        type=int,
+        default=30,
+        help="Folder scan interval in seconds",
+    )
+    watch_parser.add_argument(
+        "--send-interval",
+        type=int,
+        default=30,
+        help="Queue send interval in seconds",
+    )
+    watch_parser.add_argument(
+        "--settle-seconds",
+        type=int,
+        default=5,
+        help="Seconds to wait for file stability",
+    )
+    watch_parser.add_argument(
+        "--group-size",
+        type=int,
+        default=4,
+        help="Images per media group",
+    )
+    watch_parser.add_argument(
+        "--batch-delay",
+        type=int,
+        default=3,
+        help="Delay between media groups in seconds",
+    )
+    watch_parser.add_argument(
+        "--pause-every",
+        type=int,
+        default=0,
+        help="Pause after sending this many images (0 disables)",
+    )
+    watch_parser.add_argument(
+        "--pause-seconds",
+        type=int,
+        default=0,
+        help="Pause duration in seconds after reaching pause-every",
+    )
+    watch_parser.add_argument(
+        "--max-dimension",
+        type=int,
+        default=2000,
+        help="Maximum image dimension before scaling",
+    )
+    watch_parser.add_argument(
+        "--max-bytes",
+        type=int,
+        default=5 * 1024 * 1024,
+        help="Maximum image size in bytes before PNG compression",
+    )
+    watch_parser.add_argument(
+        "--png-start-level",
+        type=int,
+        default=8,
+        help="Initial PNG compress level for greedy search (0-9)",
+    )
+
     return parser
 
 
@@ -145,6 +232,16 @@ def _resolve_config(args: argparse.Namespace) -> tuple[list[str], list[str]]:
         tokens = valid_tokens
 
     return api_urls, tokens
+
+
+def _normalize_excludes(excludes: list[str]) -> list[str]:
+    patterns: list[str] = []
+    for item in excludes:
+        for part in item.split(","):
+            part = part.strip()
+            if part:
+                patterns.append(part)
+    return patterns
 
 
 async def run_command(args: argparse.Namespace) -> None:
@@ -201,6 +298,37 @@ async def run_command(args: argparse.Namespace) -> None:
                 max_retries=args.max_retries,
                 retry_delay=args.retry_delay,
             )
+        return
+
+    if args.command == "watch":
+        if not args.watch_dir.exists():
+            raise SystemExit(f"Watch directory not found: {args.watch_dir}")
+
+        queue = JsonlQueue(args.queue_file)
+        watch_config = WatchConfig(
+            root=args.watch_dir,
+            recursive=args.recursive,
+            exclude_globs=_normalize_excludes(args.exclude),
+            scan_interval=args.scan_interval,
+            settle_seconds=args.settle_seconds,
+        )
+        sender_config = SenderConfig(
+            chat_id=args.chat_id,
+            topic_id=args.topic_id,
+            group_size=args.group_size,
+            send_interval=args.send_interval,
+            batch_delay=args.batch_delay,
+            pause_every=args.pause_every,
+            pause_seconds=args.pause_seconds,
+            max_dimension=args.max_dimension,
+            max_bytes=args.max_bytes,
+            png_start_level=args.png_start_level,
+        )
+
+        await asyncio.gather(
+            watch_loop(watch_config, queue),
+            sender_loop(sender_config, queue, url_pool, token_pool),
+        )
         return
 
     raise SystemExit(f"Unknown command: {args.command}")

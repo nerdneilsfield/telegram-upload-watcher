@@ -7,6 +7,8 @@ We need a reliable watch pipeline that periodically scans folders, enqueues new 
 - Add a sender loop that drains the queue at a configured interval using sendMediaGroup for images.
 - Add image preprocessing to enforce max dimension and size limits (scale and compress).
 - Track queued/sent status for file entries; directories and zip files are expanded into file items for restart safety.
+- Add a configurable pause after sending a batch of images to throttle uploads.
+- Provide a default INI config example for setup.
 
 ## Impact
 - Affected specs: watch-queue-sender (new)

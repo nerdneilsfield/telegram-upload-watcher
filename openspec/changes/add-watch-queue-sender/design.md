@@ -14,6 +14,8 @@ We will add a polling-based watcher that enqueues new files and a sender that dr
 - Queue entries are file-level items; directory/zip inputs are expanded into per-file entries with source metadata.
 - Default max dimension is 2000px and size threshold is 5MB; both are configurable.
 - PNG compression uses a greedy search over compression level (start at level 8, adjust until size <= threshold).
+- Sender supports a configurable pause after sending N images to throttle uploads.
+- Provide a default INI config example in the repo for easy setup.
 
 ## Risks / Trade-offs
 - Polling may miss rapid create/delete cycles; settle window adds latency.
