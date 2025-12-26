@@ -1,0 +1,21 @@
+[project]
+name = "telegram-upload-watcher"
+version = "0.1.0"
+description = "Monitor and send organized folder contents to Telegram."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "aiohttp>=3.9.5",
+  "requests>=2.32.3",
+  "tqdm>=4.66.4",
+]
+
+[project.scripts]
+telegram-send = "telegram_upload_watcher.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["telegram_upload_watcher"]
