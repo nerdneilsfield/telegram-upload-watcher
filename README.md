@@ -64,3 +64,5 @@ Useful options / 常用参数:
 - `--max-dimension 2000` max image dimension / 最大边
 - `--max-bytes 5242880` max image bytes before PNG compress / 超过则 PNG 压缩
 - `--png-start-level 8` PNG compress start level / PNG 压缩起始等级
+- `--notify` enable watch notifications / 开启监控通知
+- `--notify-interval 300` status interval seconds / 状态通知间隔秒

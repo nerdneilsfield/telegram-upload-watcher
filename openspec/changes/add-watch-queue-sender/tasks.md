@@ -10,3 +10,4 @@
 - [x] 1.9 Update README with watch/queue usage
 - [x] 1.10 Add sender pause controls (after N images, sleep duration)
 - [x] 1.11 Add default INI config example file and document it
+- [x] 1.12 Add watch notification messages with elapsed time

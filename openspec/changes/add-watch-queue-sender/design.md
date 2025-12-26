@@ -16,6 +16,7 @@ We will add a polling-based watcher that enqueues new files and a sender that dr
 - PNG compression uses a greedy search over compression level (start at level 8, adjust until size <= threshold).
 - Sender supports a configurable pause after sending N images to throttle uploads.
 - Provide a default INI config example in the repo for easy setup.
+- Optional watch notifications send start/status/idle messages with elapsed time.
 
 ## Risks / Trade-offs
 - Polling may miss rapid create/delete cycles; settle window adds latency.

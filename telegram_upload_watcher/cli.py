@@ -6,6 +6,7 @@ from pathlib import Path
 from .config import load_config
 from .pools import TokenPool, UrlPool
 from .queue import JsonlQueue
+from .notify import NotifyConfig, notify_loop
 from .sender import SenderConfig, sender_loop
 from .telegram import (
     send_images_from_dir,
@@ -175,6 +176,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pause duration in seconds after reaching pause-every",
     )
     watch_parser.add_argument(
+        "--notify",
+        action="store_true",
+        help="Send watch start/status/idle notifications",
+    )
+    watch_parser.add_argument(
+        "--notify-interval",
+        type=int,
+        default=300,
+        help="Seconds between status notifications",
+    )
+    watch_parser.add_argument(
         "--max-dimension",
         type=int,
         default=2000,
@@ -324,11 +336,29 @@ async def run_command(args: argparse.Namespace) -> None:
             max_bytes=args.max_bytes,
             png_start_level=args.png_start_level,
         )
+        notify_config = NotifyConfig(
+            enabled=args.notify,
+            interval=args.notify_interval,
+            notify_on_idle=True,
+        )
 
-        await asyncio.gather(
+        tasks = [
             watch_loop(watch_config, queue),
             sender_loop(sender_config, queue, url_pool, token_pool),
-        )
+        ]
+        if notify_config.enabled:
+            tasks.append(
+                notify_loop(
+                    notify_config,
+                    queue,
+                    url_pool,
+                    token_pool,
+                    args.chat_id,
+                    args.topic_id,
+                )
+            )
+
+        await asyncio.gather(*tasks)
         return
 
     raise SystemExit(f"Unknown command: {args.command}")

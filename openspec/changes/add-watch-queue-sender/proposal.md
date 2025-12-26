@@ -9,6 +9,7 @@ We need a reliable watch pipeline that periodically scans folders, enqueues new 
 - Track queued/sent status for file entries; directories and zip files are expanded into file items for restart safety.
 - Add a configurable pause after sending a batch of images to throttle uploads.
 - Provide a default INI config example for setup.
+- Add optional watch notifications (start/status/idle) with elapsed time.
 
 ## Impact
 - Affected specs: watch-queue-sender (new)

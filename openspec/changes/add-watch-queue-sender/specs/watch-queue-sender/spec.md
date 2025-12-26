@@ -97,3 +97,18 @@ The system SHALL provide a default INI config example for Telegram setup.
 #### Scenario: Example config is available
 - **WHEN** a user checks the repository
 - **THEN** a sample config file shows the required fields and token format
+
+### Requirement: Watch Notifications
+The system SHALL optionally send watch notifications for start, status, and idle events including elapsed time.
+
+#### Scenario: Watch start notification
+- **WHEN** watch notifications are enabled
+- **THEN** a start message is sent with elapsed time
+
+#### Scenario: Periodic status notification
+- **WHEN** the configured notify interval elapses
+- **THEN** a status message is sent with elapsed time and queue stats
+
+#### Scenario: Idle notification
+- **WHEN** the queue becomes empty after sending items
+- **THEN** an idle message is sent with elapsed time
