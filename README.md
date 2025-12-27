@@ -66,6 +66,22 @@ Watch folder / 监控文件夹:
   --notify
 ```
 
+## Build Tools / 构建工具
+Just:
+```bash
+just build
+```
+
+Make:
+```bash
+make build
+```
+
+GoReleaser (snapshot):
+```bash
+goreleaser release --snapshot --clean
+```
+
 ## Watch / 监控
 Watch a folder and send queued images / 监控文件夹并按队列发送图片:
 ```bash
