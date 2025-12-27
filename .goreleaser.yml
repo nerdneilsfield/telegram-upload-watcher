@@ -1,0 +1,65 @@
+version: 2
+env:
+  - GO111MODULE=on
+  - CGO_ENABLED=0
+
+builds:
+  -
+    id: telegram-send-go
+    main: ./go/cmd/telegram-send-go
+    binary: telegram-send-go
+    ldflags:
+      - -s -w
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  -
+    builds:
+      - telegram-send-go
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - config.example.ini
+
+release:
+  github:
+    owner: nerdneilsfield
+    name: telegram-upload-watcher
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - '^test:'
+      - '^chore'
+      - 'merge conflict'
+      - Merge pull request
+      - Merge remote-tracking branch
+      - Merge branch
+      - go mod tidy
+  groups:
+    - title: Dependency updates
+      regexp: '^.*?(feat|fix)\(deps\)!?:.+$'
+      order: 300
+    - title: 'New Features'
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 100
+    - title: 'Bug fixes'
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 200
+    - title: 'Documentation updates'
+      regexp: ^.*?doc(\([[:word:]]+\))??!?:.+$
+      order: 400
+    - title: Other work
+      order: 9999
