@@ -24,4 +24,4 @@ We need a Go version that mirrors the Python watcher pipeline for easier deploym
 - Document separate usage and binary name to avoid conflicts.
 
 ## Open Questions
-- Do you want any web server component (Fiber), or only a high-performance HTTP client (fasthttp) for Telegram API?
+- None at this time.
