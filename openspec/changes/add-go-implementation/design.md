@@ -6,7 +6,9 @@ We need a Go version that mirrors the Python watcher pipeline for easier deploym
 - Non-Goals: changing behavior or adding new features beyond parity.
 
 ## Decisions
-- Place Go implementation under a dedicated directory (e.g., go/) with a cmd/ entrypoint.
+- Go version is 1.24 with module path github.com/nerdneilsfield/telegram-upload-watcher.
+- Place Go implementation under go/ with go/cmd, go/pkgs, and go/internal.
+- Binary name is telegram-send-go.
 - Use a high-performance HTTP client (e.g., fasthttp) for Telegram API calls and multipart uploads.
 - Use a small INI parser (e.g., gopkg.in/ini.v1) to match existing config format.
 - Use a lightweight image library (e.g., github.com/disintegration/imaging) for resize.
@@ -22,7 +24,4 @@ We need a Go version that mirrors the Python watcher pipeline for easier deploym
 - Document separate usage and binary name to avoid conflicts.
 
 ## Open Questions
-- Preferred Go version and module path?
-- Preferred binary name (telegram-send-go vs another)?
-- Should Go output directory be /go or /cmd at repo root?
 - Do you want any web server component (Fiber), or only a high-performance HTTP client (fasthttp) for Telegram API?
