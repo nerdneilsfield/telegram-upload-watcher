@@ -1,6 +1,6 @@
 projectname := "telegram-upload-watcher"
 gobin := "telegram-send-go"
-go_cmd := "./go/cmd/telegram-send-go"
+go_cmd := "./go/cmd/telegram-send-go-cli"
 
 default:
     @just --list

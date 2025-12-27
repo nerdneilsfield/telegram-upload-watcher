@@ -9,7 +9,7 @@ uv sync
 
 Go build:
 ```bash
-go build -o telegram-send-go ./go/cmd/telegram-send-go
+go build -o telegram-send-go ./go/cmd/telegram-send-go-cli
 ```
 
 ## Config / 配置 (INI)

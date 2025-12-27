@@ -8,15 +8,15 @@ help: ## list makefile targets
 
 .PHONY: build
 build: ## build go binary
-	@go build -o $(projectname) ./go/cmd/telegram-send-go
+	@go build -o $(projectname) ./go/cmd/telegram-send-go-cli
 
 .PHONY: install
 install: ## install go binary
-	@go install ./go/cmd/telegram-send-go
+	@go install ./go/cmd/telegram-send-go-cli
 
 .PHONY: run
 run: ## run the go cli
-	@go run ./go/cmd/telegram-send-go --help
+	@go run ./go/cmd/telegram-send-go-cli --help
 
 .PHONY: test
 test: ## run go tests

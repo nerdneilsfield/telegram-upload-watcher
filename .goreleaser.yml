@@ -6,7 +6,7 @@ env:
 builds:
   -
     id: telegram-send-go
-    main: ./go/cmd/telegram-send-go
+    main: ./go/cmd/telegram-send-go-cli
     binary: telegram-send-go
     ldflags:
       - -s -w
