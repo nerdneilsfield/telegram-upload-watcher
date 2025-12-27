@@ -215,7 +215,8 @@ func runWatch(args []string) {
 	watchDir := fs.String("watch-dir", "", "Folder to watch")
 	queueFile := fs.String("queue-file", "queue.jsonl", "Path to JSONL queue file")
 	recursive := fs.Bool("recursive", false, "Enable recursive scan")
-	excludes := fs.String("exclude", "", "Glob patterns to exclude (comma-separated)")
+	excludes := &stringSlice{}
+	fs.Var(excludes, "exclude", "Glob patterns to exclude (repeatable or comma-separated)")
 	scanInterval := fs.Int("scan-interval", 30, "Folder scan interval (seconds)")
 	sendInterval := fs.Int("send-interval", 30, "Queue send interval (seconds)")
 	settleSeconds := fs.Int("settle-seconds", 5, "Seconds to wait for file stability")
@@ -255,7 +256,7 @@ func runWatch(args []string) {
 	watchCfg := watcher.Config{
 		Root:          *watchDir,
 		Recursive:     *recursive,
-		ExcludeGlobs:  splitPatterns(*excludes),
+		ExcludeGlobs:  excludes.Values(),
 		ScanInterval:  time.Duration(*scanInterval) * time.Second,
 		SettleSeconds: *settleSeconds,
 	}
@@ -422,17 +423,24 @@ func isImage(name string) bool {
 	return false
 }
 
-func splitPatterns(input string) []string {
-	if input == "" {
-		return nil
-	}
-	parts := strings.Split(input, ",")
-	patterns := []string{}
-	for _, part := range parts {
+type stringSlice struct {
+	values []string
+}
+
+func (s *stringSlice) String() string {
+	return strings.Join(s.values, ",")
+}
+
+func (s *stringSlice) Set(value string) error {
+	for _, part := range strings.Split(value, ",") {
 		part = strings.TrimSpace(part)
 		if part != "" {
-			patterns = append(patterns, part)
+			s.values = append(s.values, part)
 		}
 	}
-	return patterns
+	return nil
+}
+
+func (s *stringSlice) Values() []string {
+	return s.values
 }

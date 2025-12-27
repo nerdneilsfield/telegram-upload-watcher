@@ -217,9 +217,14 @@ configs/
 go/bin/
 go/pkg/
 go/.cache/
-telegram-send-go
-telegram-send-go.exe
+/telegram-send-go
+/telegram-send-go.exe
 .goreleaser/
+
+# Keep Go source tracked
+!go/cmd/**
+!go/internal/**
+!go/pkgs/**
 
 telegram-send-go
 telegram-send-go.exe
