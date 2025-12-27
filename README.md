@@ -43,6 +43,29 @@ telegram-send send-images \
   --config /path/to/config.ini
 ```
 
+## Go CLI / Go 命令行
+Build / 编译:
+```bash
+go build -o telegram-send-go ./go/cmd/telegram-send-go
+```
+
+Send a text message / 发送文本消息:
+```bash
+./telegram-send-go send-message \
+  --chat-id "-1001234567890" \
+  --message "Hello from Go" \
+  --config ./config.example.ini
+```
+
+Watch folder / 监控文件夹:
+```bash
+./telegram-send-go watch \
+  --watch-dir /path/to/watch \
+  --chat-id "-1001234567890" \
+  --config ./config.example.ini \
+  --notify
+```
+
 ## Watch / 监控
 Watch a folder and send queued images / 监控文件夹并按队列发送图片:
 ```bash
