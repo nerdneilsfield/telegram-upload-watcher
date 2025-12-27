@@ -66,7 +66,7 @@ func (t *stabilityTracker) prune(paths map[string]struct{}) {
 }
 
 func matchesExclude(rel string, patterns []string) bool {
-	rel = path.Clean(path.ToSlash(rel))
+	rel = path.Clean(filepath.ToSlash(rel))
 	for _, pattern := range patterns {
 		pattern = strings.TrimSpace(pattern)
 		if pattern == "" {
@@ -206,7 +206,7 @@ func enqueueZip(q *queue.Queue, zipPath string, info os.FileInfo, exclude []stri
 		if file.FileInfo().IsDir() {
 			continue
 		}
-		inner := path.Clean(path.ToSlash(file.Name))
+		inner := path.Clean(filepath.ToSlash(file.Name))
 		if matchesExclude(inner, exclude) {
 			continue
 		}
