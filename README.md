@@ -189,6 +189,8 @@ Useful options / 常用参数:
 Note / 说明:
 `--zip-pass` and `--zip-pass-file` apply to encrypted zips found by `--enable-zip` and watch mode too.
 `--zip-pass` 和 `--zip-pass-file` 也适用于 `--enable-zip` 或 watch 扫描到的加密 zip。
+The queue file writes a metadata header on the first line (watch dir/chat/topic/include/exclude/types). Reusing the same queue with different parameters exits with an error; use a new `--queue-file` or delete the old queue.
+队列文件首行会写入运行参数元数据（监控路径/聊天/topic/过滤/类型）。使用不同参数复用同一个队列会报错退出；请改用新的 `--queue-file` 或删除旧队列。
 
 Filtering rules / 过滤规则:
 - If `--include` is empty, everything is included by default.

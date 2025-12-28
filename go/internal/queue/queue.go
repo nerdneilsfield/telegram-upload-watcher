@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,11 +21,34 @@ const (
 	StatusSending = "sending"
 	StatusSent    = "sent"
 	StatusFailed  = "failed"
+
+	MetaType    = "queue_meta"
+	MetaVersion = 1
 )
 
 var pendingStatuses = map[string]bool{
 	StatusQueued: true,
 	StatusFailed: true,
+}
+
+type Meta struct {
+	Type    string     `json:"type"`
+	Version int        `json:"version"`
+	Params  MetaParams `json:"params"`
+}
+
+type MetaParams struct {
+	Command   string   `json:"command"`
+	WatchDir  string   `json:"watch_dir"`
+	Recursive bool     `json:"recursive"`
+	ChatID    string   `json:"chat_id"`
+	TopicID   *int     `json:"topic_id,omitempty"`
+	WithImage bool     `json:"with_image"`
+	WithVideo bool     `json:"with_video"`
+	WithAudio bool     `json:"with_audio"`
+	WithAll   bool     `json:"with_all"`
+	Include   []string `json:"include,omitempty"`
+	Exclude   []string `json:"exclude,omitempty"`
 }
 
 type Item struct {
@@ -52,9 +77,12 @@ type Queue struct {
 	sourceIndex      map[string]struct{}
 	appendCh         chan *Item
 	closeCh          chan struct{}
+	meta             *Meta
+	metaChecked      bool
+	metaFound        bool
 }
 
-func New(path string) (*Queue, error) {
+func New(path string, meta *Meta) (*Queue, error) {
 	q := &Queue{
 		path:             path,
 		items:            map[string]*Item{},
@@ -62,9 +90,15 @@ func New(path string) (*Queue, error) {
 		sourceIndex:      map[string]struct{}{},
 		appendCh:         make(chan *Item, 4096),
 		closeCh:          make(chan struct{}),
+		meta:             normalizeMeta(meta),
 	}
 	if err := q.load(); err != nil {
 		return nil, err
+	}
+	if q.meta != nil && !q.metaChecked {
+		if err := q.writeMeta(); err != nil {
+			return nil, err
+		}
 	}
 	go q.writerLoop()
 	return q, nil
@@ -80,6 +114,42 @@ func buildID() (string, error) {
 
 func nowUTC() string {
 	return time.Now().UTC().Format(time.RFC3339Nano)
+}
+
+func normalizeMeta(meta *Meta) *Meta {
+	if meta == nil {
+		return nil
+	}
+	copyMeta := *meta
+	if copyMeta.Type == "" {
+		copyMeta.Type = MetaType
+	}
+	if copyMeta.Version == 0 {
+		copyMeta.Version = MetaVersion
+	}
+	copyMeta.Params.Include = append([]string{}, meta.Params.Include...)
+	copyMeta.Params.Exclude = append([]string{}, meta.Params.Exclude...)
+	sort.Strings(copyMeta.Params.Include)
+	sort.Strings(copyMeta.Params.Exclude)
+	return &copyMeta
+}
+
+func parseMeta(line string) (*Meta, bool, error) {
+	var meta Meta
+	if err := json.Unmarshal([]byte(line), &meta); err != nil {
+		return nil, false, err
+	}
+	if meta.Type != MetaType || meta.Version != MetaVersion {
+		return nil, false, nil
+	}
+	return normalizeMeta(&meta), true, nil
+}
+
+func metaMatches(expected *Meta, actual *Meta) bool {
+	if expected == nil || actual == nil {
+		return false
+	}
+	return reflect.DeepEqual(normalizeMeta(expected), normalizeMeta(actual))
 }
 
 func BuildFingerprint(sourceType, path string, innerPath *string, size int64, mtimeNS *int64, crc *uint32) string {
@@ -127,6 +197,26 @@ func (q *Queue) load() error {
 		if line == "" {
 			continue
 		}
+		if !q.metaChecked {
+			q.metaChecked = true
+			meta, ok, err := parseMeta(line)
+			if err != nil {
+				if q.meta != nil {
+					return errors.New("queue metadata missing or invalid. Use a different --queue-file")
+				}
+				continue
+			}
+			if ok {
+				q.metaFound = true
+				if q.meta != nil && !metaMatches(q.meta, meta) {
+					return errors.New("queue metadata does not match current run parameters")
+				}
+				continue
+			}
+			if q.meta != nil {
+				return errors.New("queue metadata missing. Use a different --queue-file")
+			}
+		}
 		var item Item
 		if err := json.Unmarshal([]byte(line), &item); err != nil {
 			continue
@@ -148,6 +238,31 @@ func (q *Queue) rebuildIndexes() {
 		key := item.SourceType + ":" + item.SourceFingerprint
 		q.sourceIndex[key] = struct{}{}
 	}
+}
+
+func (q *Queue) writeMeta() error {
+	if q.meta == nil {
+		return nil
+	}
+	q.meta = normalizeMeta(q.meta)
+	if err := os.MkdirAll(filepath.Dir(q.path), 0o755); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(q.path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	data, err := json.Marshal(q.meta)
+	if err != nil {
+		return err
+	}
+	if _, err := file.Write(append(data, '\n')); err != nil {
+		return err
+	}
+	q.metaChecked = true
+	q.metaFound = true
+	return nil
 }
 
 func (q *Queue) writerLoop() {

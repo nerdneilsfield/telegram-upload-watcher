@@ -16,6 +16,9 @@ STATUS_FAILED = "failed"
 
 PENDING_STATUSES = {STATUS_QUEUED, STATUS_FAILED}
 
+QUEUE_META_TYPE = "queue_meta"
+QUEUE_META_VERSION = 1
+
 
 @dataclass
 class QueueItem:
@@ -38,6 +41,41 @@ class QueueItem:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _normalize_meta_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _normalize_meta_value(val) for key, val in value.items()}
+    if isinstance(value, list):
+        normalized = [_normalize_meta_value(item) for item in value]
+        try:
+            return sorted(normalized)
+        except TypeError:
+            return normalized
+    return value
+
+
+def _normalize_meta(meta: dict[str, Any]) -> dict[str, Any]:
+    return _normalize_meta_value(meta)
+
+
+def _is_meta(payload: dict[str, Any]) -> bool:
+    return (
+        payload.get("type") == QUEUE_META_TYPE
+        and payload.get("version") == QUEUE_META_VERSION
+        and isinstance(payload.get("params"), dict)
+    )
+
+
+def _meta_params(payload: dict[str, Any]) -> dict[str, Any]:
+    params = payload.get("params")
+    if not isinstance(params, dict):
+        return {}
+    return _normalize_meta_value(params)
+
+
+def _meta_matches(expected: dict[str, Any], actual: dict[str, Any]) -> bool:
+    return _meta_params(expected) == _meta_params(actual)
 
 
 def build_fingerprint(
@@ -69,16 +107,22 @@ def build_source_fingerprint(
 
 
 class JsonlQueue:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, meta: dict[str, Any] | None = None) -> None:
         self.path = path
         self.items: dict[str, QueueItem] = {}
         self.fingerprint_index: dict[str, str] = {}
         self.source_index: set[str] = set()
+        self.meta = _normalize_meta(meta) if meta is not None else None
+        self._meta_checked = False
+        self._meta_found = False
         self._load()
+        self._ensure_meta()
 
     def _load(self) -> None:
         if not self.path.exists():
             return
+        meta_checked = False
+        meta_found = False
         try:
             with self.path.open("r", encoding="utf-8") as handle:
                 for line in handle:
@@ -89,7 +133,26 @@ class JsonlQueue:
                         payload = json.loads(line)
                     except json.JSONDecodeError:
                         logging.warning("Skipping invalid queue line")
+                        if self.meta is not None and not meta_checked:
+                            raise ValueError(
+                                "Queue metadata missing or invalid. Use a different --queue-file."
+                            )
                         continue
+                    if not meta_checked:
+                        meta_checked = True
+                        if isinstance(payload, dict) and _is_meta(payload):
+                            meta_found = True
+                            if self.meta is not None and not _meta_matches(
+                                self.meta, payload
+                            ):
+                                raise ValueError(
+                                    "Queue metadata does not match current run parameters."
+                                )
+                            continue
+                        if self.meta is not None:
+                            raise ValueError(
+                                "Queue metadata missing. Use a different --queue-file."
+                            )
                     item_id = payload.get("id")
                     if not item_id:
                         continue
@@ -102,7 +165,22 @@ class JsonlQueue:
         except FileNotFoundError:
             return
 
+        self._meta_checked = meta_checked
+        self._meta_found = meta_found
         self._rebuild_indexes()
+
+    def _ensure_meta(self) -> None:
+        if self.meta is None:
+            return
+        if self._meta_found or self._meta_checked:
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.open("w", encoding="utf-8") as handle:
+            handle.write(
+                json.dumps(self.meta, ensure_ascii=True, sort_keys=True) + "\n"
+            )
+        self._meta_checked = True
+        self._meta_found = True
 
     def _rebuild_indexes(self) -> None:
         self.fingerprint_index.clear()

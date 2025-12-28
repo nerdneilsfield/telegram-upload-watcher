@@ -5,7 +5,7 @@ from pathlib import Path
 
 from .config import load_config
 from .pools import TokenPool, UrlPool
-from .queue import JsonlQueue
+from .queue import JsonlQueue, QUEUE_META_TYPE, QUEUE_META_VERSION
 from .notify import NotifyConfig, notify_loop
 from .sender import SenderConfig, sender_loop
 from .telegram import (
@@ -676,7 +676,6 @@ async def run_command(args: argparse.Namespace) -> None:
         if not args.watch_dir.exists():
             raise SystemExit(f"Watch directory not found: {args.watch_dir}")
 
-        queue = JsonlQueue(args.queue_file)
         with_image = args.with_image
         with_video = args.with_video
         with_audio = args.with_audio
@@ -687,11 +686,34 @@ async def run_command(args: argparse.Namespace) -> None:
             with_audio = True
         if not any([with_image, with_video, with_audio, with_all]):
             with_image = True
+        include_globs = _normalize_includes(args.include)
+        exclude_globs = _normalize_excludes(args.exclude)
+        meta = {
+            "type": QUEUE_META_TYPE,
+            "version": QUEUE_META_VERSION,
+            "params": {
+                "command": "watch",
+                "watch_dir": str(args.watch_dir.resolve()),
+                "recursive": args.recursive,
+                "chat_id": args.chat_id,
+                "topic_id": args.topic_id,
+                "with_image": with_image,
+                "with_video": with_video,
+                "with_audio": with_audio,
+                "with_all": with_all,
+                "include": include_globs,
+                "exclude": exclude_globs,
+            },
+        }
+        try:
+            queue = JsonlQueue(args.queue_file, meta=meta)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
         watch_config = WatchConfig(
             root=args.watch_dir,
             recursive=args.recursive,
-            exclude_globs=_normalize_excludes(args.exclude),
-            include_globs=_normalize_includes(args.include),
+            exclude_globs=exclude_globs,
+            include_globs=include_globs,
             with_image=with_image,
             with_video=with_video,
             with_audio=with_audio,

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/notify"
@@ -75,7 +76,25 @@ func newWatchCmd() *cobra.Command {
 				withImage = true
 			}
 
-			q, err := queue.New(queueFile)
+			absWatchDir, err := filepath.Abs(watchDir)
+			if err != nil {
+				return err
+			}
+			q, err := queue.New(queueFile, &queue.Meta{
+				Params: queue.MetaParams{
+					Command:   "watch",
+					WatchDir:  absWatchDir,
+					Recursive: recursive,
+					ChatID:    cfg.chatID,
+					TopicID:   topicPtr(cfg),
+					WithImage: withImage,
+					WithVideo: withVideo,
+					WithAudio: withAudio,
+					WithAll:   withAll,
+					Include:   includes.Values(),
+					Exclude:   excludes.Values(),
+				},
+			})
 			if err != nil {
 				return err
 			}
