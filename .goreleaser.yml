@@ -6,10 +6,13 @@ env:
 builds:
   -
     id: telegram-send-go
-    main: ./go/cmd/telegram-send-go-cli
+    main: ./go
     binary: telegram-send-go
     ldflags:
       - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.buildTime={{ .Date }}
+      - -X main.gitCommit={{ .FullCommit }}
     goos:
       - linux
       - darwin
@@ -17,6 +20,13 @@ builds:
     goarch:
       - amd64
       - arm64
+    overrides:
+      - goos: linux
+        ldflags:
+          - -s -w -extldflags "-static"
+          - -X main.version={{ .Version }}
+          - -X main.buildTime={{ .Date }}
+          - -X main.gitCommit={{ .FullCommit }}
 
 archives:
   -

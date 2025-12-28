@@ -8,15 +8,19 @@ help: ## list makefile targets
 
 .PHONY: build
 build: ## build go binary
-	@go build -o $(projectname) ./go/cmd/telegram-send-go-cli
+	@go build -ldflags "-X main.version=$(shell git describe --abbrev=0 --tags) -X main.buildTime=$(shell date +%Y%m%d%H%M%S) -X main.gitCommit=$(shell git rev-parse HEAD)" -o $(projectname) ./go
+
+.PHONY: build-static
+build-static: ## build static go binary
+	@CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -extldflags \"-static\" -X main.version=$(shell git describe --abbrev=0 --tags) -X main.buildTime=$(shell date +%Y%m%d%H%M%S) -X main.gitCommit=$(shell git rev-parse HEAD)" -o $(projectname) ./go
 
 .PHONY: install
 install: ## install go binary
-	@go install ./go/cmd/telegram-send-go-cli
+	@go install -ldflags "-X main.version=$(shell git describe --abbrev=0 --tags) -X main.buildTime=$(shell date +%Y%m%d%H%M%S) -X main.gitCommit=$(shell git rev-parse HEAD)" ./go
 
 .PHONY: run
 run: ## run the go cli
-	@go run ./go/cmd/telegram-send-go-cli --help
+	@go run -ldflags "-X main.version=$(shell git describe --abbrev=0 --tags) -X main.buildTime=$(shell date +%Y%m%d%H%M%S) -X main.gitCommit=$(shell git rev-parse HEAD)" ./go --help
 
 .PHONY: test
 test: ## run go tests

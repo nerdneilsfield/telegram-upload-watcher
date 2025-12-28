@@ -9,7 +9,7 @@ uv sync
 
 Go build:
 ```bash
-go build -o telegram-send-go ./go/cmd/telegram-send-go-cli
+go build -o telegram-send-go ./go
 ```
 
 ## Config / 配置 (INI)
@@ -43,6 +43,11 @@ $CLI send-message \
   --chat-id "-1001234567890" \
   --message "Hello from telegram-upload-watcher" \
   --config ./config.example.ini
+```
+
+Show version / 查看版本:
+```bash
+$CLI version
 ```
 
 Send images from a directory / 发送目录图片:

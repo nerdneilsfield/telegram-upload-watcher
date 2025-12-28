@@ -1,6 +1,6 @@
 projectname := "telegram-upload-watcher"
 gobin := "telegram-send-go"
-go_cmd := "./go/cmd/telegram-send-go-cli"
+go_cmd := "./go"
 
 default:
     @just --list
@@ -8,18 +8,26 @@ default:
 # Build Go binary
 build:
     @if [ "{{os()}}" = "windows" ]; then \
-        go build -o {{gobin}}.exe {{go_cmd}}; \
+        go build -ldflags "-X main.version=$(git describe --abbrev=0 --tags) -X main.buildTime=$(date +%Y%m%d%H%M%S) -X main.gitCommit=$(git rev-parse HEAD)" -o {{gobin}}.exe {{go_cmd}}; \
     else \
-        go build -o {{gobin}} {{go_cmd}}; \
+        go build -ldflags "-X main.version=$(git describe --abbrev=0 --tags) -X main.buildTime=$(date +%Y%m%d%H%M%S) -X main.gitCommit=$(git rev-parse HEAD)" -o {{gobin}} {{go_cmd}}; \
+    fi
+
+# Build static Go binary
+build-static:
+    @if [ "{{os()}}" = "windows" ]; then \
+        CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -extldflags \"-static\" -X main.version=$(git describe --abbrev=0 --tags) -X main.buildTime=$(date +%Y%m%d%H%M%S) -X main.gitCommit=$(git rev-parse HEAD)" -o {{gobin}}.exe {{go_cmd}}; \
+    else \
+        CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -extldflags \"-static\" -X main.version=$(git describe --abbrev=0 --tags) -X main.buildTime=$(date +%Y%m%d%H%M%S) -X main.gitCommit=$(git rev-parse HEAD)" -o {{gobin}} {{go_cmd}}; \
     fi
 
 # Install Go binary
 install:
-    go install {{go_cmd}}
+    go install -ldflags "-X main.version=$(git describe --abbrev=0 --tags) -X main.buildTime=$(date +%Y%m%d%H%M%S) -X main.gitCommit=$(git rev-parse HEAD)" {{go_cmd}}
 
 # Run Go CLI
 run:
-    go run {{go_cmd}} --help
+    go run -ldflags "-X main.version=$(git describe --abbrev=0 --tags) -X main.buildTime=$(date +%Y%m%d%H%M%S) -X main.gitCommit=$(git rev-parse HEAD)" {{go_cmd}} --help
 
 # Format Go files
 fmt:
