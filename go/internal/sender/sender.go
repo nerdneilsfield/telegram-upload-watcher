@@ -38,13 +38,33 @@ func Loop(cfg Config, q *queue.Queue, client *telegram.Client) {
 			continue
 		}
 
-		for i := 0; i < len(pending); i += cfg.GroupSize {
-			end := i + cfg.GroupSize
-			if end > len(pending) {
-				end = len(pending)
+		for i := 0; i < len(pending); {
+			item := pending[i]
+			sendType := item.SendType
+			if sendType == "" {
+				sendType = "image"
 			}
-			group := pending[i:end]
-			sent := sendGroup(cfg, q, client, group)
+
+			sent := 0
+			if sendType == "image" {
+				group := []*queue.Item{}
+				for i < len(pending) && len(group) < cfg.GroupSize {
+					current := pending[i]
+					currentType := current.SendType
+					if currentType == "" {
+						currentType = "image"
+					}
+					if currentType != "image" {
+						break
+					}
+					group = append(group, current)
+					i++
+				}
+				sent = sendImageGroup(cfg, q, client, group)
+			} else {
+				sent = sendSingle(cfg, q, client, item, sendType)
+				i++
+			}
 			sentSincePause += sent
 			time.Sleep(cfg.BatchDelay)
 
@@ -59,7 +79,7 @@ func Loop(cfg Config, q *queue.Queue, client *telegram.Client) {
 	}
 }
 
-func sendGroup(cfg Config, q *queue.Queue, client *telegram.Client, items []*queue.Item) int {
+func sendImageGroup(cfg Config, q *queue.Queue, client *telegram.Client, items []*queue.Item) int {
 	mediaFiles := []telegram.MediaFile{}
 	itemRefs := []*queue.Item{}
 
@@ -99,6 +119,38 @@ func sendGroup(cfg Config, q *queue.Queue, client *telegram.Client, items []*que
 		q.UpdateStatus(item.ID, queue.StatusSent, nil)
 	}
 	return len(itemRefs)
+}
+
+func sendSingle(cfg Config, q *queue.Queue, client *telegram.Client, item *queue.Item, sendType string) int {
+	if err := q.UpdateStatus(item.ID, queue.StatusSending, nil); err != nil {
+		return 0
+	}
+	data, filename, err := loadItem(item, cfg.ZipPasswords)
+	if err != nil {
+		msg := err.Error()
+		q.UpdateStatus(item.ID, queue.StatusFailed, &msg)
+		return 0
+	}
+
+	var sendErr error
+	file := telegram.MediaFile{Filename: filename, Data: data}
+	switch sendType {
+	case "file":
+		sendErr = client.SendDocument(cfg.ChatID, file, cfg.TopicID, cfg.Retry)
+	case "video":
+		sendErr = client.SendVideo(cfg.ChatID, file, cfg.TopicID, cfg.Retry)
+	case "audio":
+		sendErr = client.SendAudio(cfg.ChatID, file, cfg.TopicID, cfg.Retry)
+	default:
+		sendErr = fmt.Errorf("unsupported send type: %s", sendType)
+	}
+	if sendErr != nil {
+		msg := sendErr.Error()
+		q.UpdateStatus(item.ID, queue.StatusFailed, &msg)
+		return 0
+	}
+	q.UpdateStatus(item.ID, queue.StatusSent, nil)
+	return 1
 }
 
 func loadItem(item *queue.Item, zipPasswords []string) ([]byte, string, error) {

@@ -17,6 +17,10 @@ func newWatchCmd() *cobra.Command {
 	var watchDir string
 	var queueFile string
 	var recursive bool
+	var withImage bool
+	var withVideo bool
+	var withAudio bool
+	var withAll bool
 	includes := &stringSlice{}
 	excludes := &stringSlice{}
 	var scanInterval int
@@ -62,6 +66,15 @@ func newWatchCmd() *cobra.Command {
 				return err
 			}
 
+			if withAll {
+				withImage = true
+				withVideo = true
+				withAudio = true
+			}
+			if !withImage && !withVideo && !withAudio && !withAll {
+				withImage = true
+			}
+
 			q, err := queue.New(queueFile)
 			if err != nil {
 				return err
@@ -72,6 +85,10 @@ func newWatchCmd() *cobra.Command {
 				Recursive:     recursive,
 				IncludeGlobs:  includes.Values(),
 				ExcludeGlobs:  excludes.Values(),
+				WithImage:     withImage,
+				WithVideo:     withVideo,
+				WithAudio:     withAudio,
+				WithAll:       withAll,
 				ScanInterval:  time.Duration(scanInterval) * time.Second,
 				SettleSeconds: settleSeconds,
 			}
@@ -113,6 +130,10 @@ func newWatchCmd() *cobra.Command {
 	flags.StringVar(&watchDir, "watch-dir", "", "Folder to watch")
 	flags.StringVar(&queueFile, "queue-file", "queue.jsonl", "Path to JSONL queue file")
 	flags.BoolVar(&recursive, "recursive", false, "Enable recursive scan")
+	flags.BoolVar(&withImage, "with-image", false, "Send matching images (media groups)")
+	flags.BoolVar(&withVideo, "with-video", false, "Send matching videos")
+	flags.BoolVar(&withAudio, "with-audio", false, "Send matching audio files")
+	flags.BoolVar(&withAll, "all", false, "Send all matching files (images use media groups)")
 	flags.Var(includes, "include", "Glob patterns to include (repeatable or comma-separated)")
 	flags.Var(excludes, "exclude", "Glob patterns to exclude (repeatable or comma-separated)")
 	flags.IntVar(&scanInterval, "scan-interval", 30, "Folder scan interval (seconds)")

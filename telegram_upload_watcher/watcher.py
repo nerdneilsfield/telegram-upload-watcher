@@ -9,7 +9,7 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from .constants import IMAGE_EXTENSIONS
+from .constants import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 from .queue import JsonlQueue, build_fingerprint, build_source_fingerprint
 
 
@@ -19,6 +19,10 @@ class WatchConfig:
     recursive: bool
     include_globs: list[str]
     exclude_globs: list[str]
+    with_image: bool
+    with_video: bool
+    with_audio: bool
+    with_all: bool
     scan_interval: int
     settle_seconds: int
 
@@ -112,15 +116,21 @@ def _iter_files(
     return files
 
 
-def _is_candidate(path: Path) -> bool:
-    lower_name = path.name.lower()
-    if lower_name.endswith(".zip"):
-        return True
-    return lower_name.endswith(IMAGE_EXTENSIONS)
+def _send_type_for_name(name: str, config: WatchConfig) -> str | None:
+    lower_name = name.lower()
+    if config.with_image and lower_name.endswith(IMAGE_EXTENSIONS):
+        return "image"
+    if config.with_video and lower_name.endswith(VIDEO_EXTENSIONS):
+        return "video"
+    if config.with_audio and lower_name.endswith(AUDIO_EXTENSIONS):
+        return "audio"
+    if config.with_all:
+        return "file"
+    return None
 
 
 def _enqueue_file(
-    queue: JsonlQueue, path: Path, size: int, mtime_ns: int
+    queue: JsonlQueue, path: Path, size: int, mtime_ns: int, send_type: str
 ) -> None:
     source_path = str(path)
     source_fingerprint = build_source_fingerprint(source_path, size, mtime_ns)
@@ -132,6 +142,7 @@ def _enqueue_file(
         inner_path=None,
         size=size,
         mtime_ns=mtime_ns,
+        send_type=send_type,
     )
 
 
@@ -140,6 +151,7 @@ def _enqueue_zip(
     zip_path: Path,
     size: int,
     mtime_ns: int,
+    config: WatchConfig,
     include_globs: list[str],
     exclude_globs: list[str],
 ) -> int:
@@ -159,7 +171,8 @@ def _enqueue_zip(
                     continue
                 if _matches_exclude(inner_path, exclude_globs):
                     continue
-                if not inner_path.lower().endswith(IMAGE_EXTENSIONS):
+                send_type = _send_type_for_name(inner_path, config)
+                if send_type is None:
                     continue
                 item = queue.enqueue_item(
                     source_type="zip",
@@ -170,6 +183,7 @@ def _enqueue_zip(
                     size=info.file_size,
                     mtime_ns=None,
                     crc=info.CRC,
+                    send_type=send_type,
                 )
                 if item:
                     added += 1
@@ -191,8 +205,6 @@ def scan_once(config: WatchConfig, queue: JsonlQueue, tracker: StabilityTracker)
 
     for path in candidates:
         seen.add(path)
-        if not _is_candidate(path):
-            continue
 
         try:
             stat = path.stat()
@@ -205,6 +217,7 @@ def scan_once(config: WatchConfig, queue: JsonlQueue, tracker: StabilityTracker)
         if queue.has_fingerprint(fingerprint):
             continue
 
+        send_type = _send_type_for_name(path.name, config)
         if path.name.lower().endswith(".zip"):
             source_fingerprint = build_source_fingerprint(
                 str(path), stat.st_size, stat.st_mtime_ns
@@ -218,14 +231,17 @@ def scan_once(config: WatchConfig, queue: JsonlQueue, tracker: StabilityTracker)
                 path,
                 stat.st_size,
                 stat.st_mtime_ns,
+                config,
                 config.include_globs,
                 config.exclude_globs,
             )
         else:
+            if send_type is None:
+                continue
             if not tracker.is_stable(path, stat.st_size, stat.st_mtime_ns):
                 continue
             before = len(queue.items)
-            _enqueue_file(queue, path, stat.st_size, stat.st_mtime_ns)
+            _enqueue_file(queue, path, stat.st_size, stat.st_mtime_ns, send_type)
             if len(queue.items) > before:
                 enqueued += 1
 

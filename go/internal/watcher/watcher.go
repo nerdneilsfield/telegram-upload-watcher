@@ -18,6 +18,10 @@ type Config struct {
 	Recursive     bool
 	IncludeGlobs  []string
 	ExcludeGlobs  []string
+	WithImage     bool
+	WithVideo     bool
+	WithAudio     bool
+	WithAll       bool
 	ScanInterval  time.Duration
 	SettleSeconds int
 }
@@ -107,6 +111,42 @@ func isImage(name string) bool {
 	return false
 }
 
+func isVideo(name string) bool {
+	name = strings.ToLower(name)
+	for _, ext := range constants.VideoExtensions {
+		if strings.HasSuffix(name, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+func isAudio(name string) bool {
+	name = strings.ToLower(name)
+	for _, ext := range constants.AudioExtensions {
+		if strings.HasSuffix(name, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+func sendTypeForName(name string, cfg Config) string {
+	if cfg.WithImage && isImage(name) {
+		return "image"
+	}
+	if cfg.WithVideo && isVideo(name) {
+		return "video"
+	}
+	if cfg.WithAudio && isAudio(name) {
+		return "audio"
+	}
+	if cfg.WithAll {
+		return "file"
+	}
+	return ""
+}
+
 func scanOnce(cfg Config, q *queue.Queue, tracker *stabilityTracker) int {
 	root := cfg.Root
 	enqueued := 0
@@ -115,7 +155,8 @@ func scanOnce(cfg Config, q *queue.Queue, tracker *stabilityTracker) int {
 	handleFile := func(path string, info os.FileInfo) {
 		seen[path] = struct{}{}
 		nameLower := strings.ToLower(info.Name())
-		if !isImage(nameLower) && !strings.HasSuffix(nameLower, ".zip") {
+		sendType := sendTypeForName(nameLower, cfg)
+		if sendType == "" && !strings.HasSuffix(nameLower, ".zip") {
 			return
 		}
 
@@ -133,7 +174,7 @@ func scanOnce(cfg Config, q *queue.Queue, tracker *stabilityTracker) int {
 			if !tracker.isStable(path, info.Size(), mtimeNS) {
 				return
 			}
-			enqueued += enqueueZip(q, path, info, cfg.IncludeGlobs, cfg.ExcludeGlobs)
+			enqueued += enqueueZip(q, path, info, cfg, cfg.IncludeGlobs, cfg.ExcludeGlobs)
 			return
 		}
 
@@ -148,6 +189,7 @@ func scanOnce(cfg Config, q *queue.Queue, tracker *stabilityTracker) int {
 			Size:              info.Size(),
 			MTimeNS:           &mtimeNS,
 			Fingerprint:       fingerprint,
+			SendType:          sendType,
 		}
 		if _, err := q.Enqueue(item); err == nil {
 			enqueued++
@@ -215,7 +257,7 @@ func scanOnce(cfg Config, q *queue.Queue, tracker *stabilityTracker) int {
 	return enqueued
 }
 
-func enqueueZip(q *queue.Queue, zipPath string, info os.FileInfo, include []string, exclude []string) int {
+func enqueueZip(q *queue.Queue, zipPath string, info os.FileInfo, cfg Config, include []string, exclude []string) int {
 	count := 0
 	sourceFingerprint := queue.BuildSourceFingerprint(zipPath, info.Size(), ptrInt64(info.ModTime().UnixNano()))
 	if q.HasSourceFingerprint("zip", sourceFingerprint) {
@@ -240,7 +282,8 @@ func enqueueZip(q *queue.Queue, zipPath string, info os.FileInfo, include []stri
 		if matchesExclude(inner, exclude) {
 			continue
 		}
-		if !isImage(inner) {
+		sendType := sendTypeForName(inner, cfg)
+		if sendType == "" {
 			continue
 		}
 		innerCopy := inner
@@ -255,6 +298,7 @@ func enqueueZip(q *queue.Queue, zipPath string, info os.FileInfo, include []stri
 			Size:              size,
 			Fingerprint:       queue.BuildFingerprint("zip", zipPath, &innerCopy, size, nil, &crc),
 			CRC:               &crc,
+			SendType:          sendType,
 		}
 		if _, err := q.Enqueue(item); err == nil {
 			count++

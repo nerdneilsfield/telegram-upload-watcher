@@ -58,6 +58,32 @@ $CLI send-images \
   --config ./config.example.ini
 ```
 
+Send a file / 发送文件:
+```bash
+$CLI send-file \
+  --chat-id "-1001234567890" \
+  --file /path/to/report.pdf \
+  --config ./config.example.ini
+```
+
+Send videos / 发送视频:
+```bash
+$CLI send-video \
+  --chat-id "-1001234567890" \
+  --dir /path/to/videos \
+  --include "*.mp4" \
+  --config ./config.example.ini
+```
+
+Send audio / 发送音频:
+```bash
+$CLI send-audio \
+  --chat-id "-1001234567890" \
+  --dir /path/to/audio \
+  --include "*.mp3" \
+  --config ./config.example.ini
+```
+
 Send images from a zip / 发送压缩包图片:
 ```bash
 $CLI send-images \
@@ -95,6 +121,8 @@ $CLI watch \
   --watch-dir /path/to/watch \
   --chat-id "-1001234567890" \
   --config ./config.example.ini \
+  --with-image \
+  --with-video \
   --notify
 ```
 
@@ -141,6 +169,10 @@ Useful options / 常用参数:
 - `--enable-zip` include zip files when scanning directories / 扫描目录时处理 zip
 - `--zip-pass "secret"` zip password (repeatable; works with --zip-file/--enable-zip/watch) / zip 密码 (可重复; 适用于 --zip-file/--enable-zip/watch)
 - `--zip-pass-file passwords.txt` zip password file (one per line) / zip 密码文件 (每行一个)
+- `--with-image` watch images / 监控图片
+- `--with-video` watch videos / 监控视频
+- `--with-audio` watch audio / 监控音频
+- `--all` watch all files (images use media groups) / 监控所有文件(图片走 media group)
 - `--topic-id 3` send to topic/thread / 发送到话题
 - `--scan-interval 30` scan interval seconds / 扫描间隔秒
 - `--send-interval 30` send interval seconds / 发送间隔秒

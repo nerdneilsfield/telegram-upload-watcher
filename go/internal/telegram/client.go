@@ -123,6 +123,38 @@ func (c *Client) SendMediaGroup(chatID string, media []MediaFile, topicID *int, 
 	return c.doRequest("/sendMediaGroup", body.Bytes(), writer.FormDataContentType(), retry)
 }
 
+func (c *Client) SendDocument(chatID string, file MediaFile, topicID *int, retry RetryConfig) error {
+	return c.sendFile("/sendDocument", "document", chatID, file, topicID, retry)
+}
+
+func (c *Client) SendVideo(chatID string, file MediaFile, topicID *int, retry RetryConfig) error {
+	return c.sendFile("/sendVideo", "video", chatID, file, topicID, retry)
+}
+
+func (c *Client) SendAudio(chatID string, file MediaFile, topicID *int, retry RetryConfig) error {
+	return c.sendFile("/sendAudio", "audio", chatID, file, topicID, retry)
+}
+
+func (c *Client) sendFile(path string, fieldName string, chatID string, file MediaFile, topicID *int, retry RetryConfig) error {
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	writer.WriteField("chat_id", chatID)
+	if topicID != nil {
+		writer.WriteField("message_thread_id", fmt.Sprintf("%d", *topicID))
+	}
+
+	part, err := writer.CreateFormFile(fieldName, file.Filename)
+	if err != nil {
+		return err
+	}
+	if _, err := part.Write(file.Data); err != nil {
+		return err
+	}
+	writer.Close()
+
+	return c.doRequest(path, body.Bytes(), writer.FormDataContentType(), retry)
+}
+
 func (c *Client) doRequest(path string, body []byte, contentType string, retry RetryConfig) error {
 	if retry.MaxRetries <= 0 {
 		retry.MaxRetries = 1

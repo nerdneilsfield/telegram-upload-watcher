@@ -36,6 +36,7 @@ type Item struct {
 	Size              int64   `json:"size"`
 	MTimeNS           *int64  `json:"mtime_ns,omitempty"`
 	CRC               *uint32 `json:"crc,omitempty"`
+	SendType          string  `json:"send_type,omitempty"`
 	Fingerprint       string  `json:"fingerprint"`
 	Status            string  `json:"status"`
 	EnqueuedAt        string  `json:"enqueued_at"`

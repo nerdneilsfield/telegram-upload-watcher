@@ -9,9 +9,14 @@ from .queue import JsonlQueue
 from .notify import NotifyConfig, notify_loop
 from .sender import SenderConfig, sender_loop
 from .telegram import (
+    send_audio,
+    send_document,
+    send_files_from_dir,
+    send_files_from_zip,
     send_images_from_dir,
     send_images_from_zip,
     send_message,
+    send_video,
     test_token,
 )
 from .watcher import WatchConfig, watch_loop
@@ -138,6 +143,180 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to file with zip passwords (one per line)",
     )
 
+    send_file_parser = subparsers.add_parser(
+        "send-file", parents=[common], help="Send files using sendDocument"
+    )
+    send_file_parser.add_argument("--file", type=Path, help="File path")
+    send_file_parser.add_argument("--dir", type=Path, help="Directory path")
+    send_file_parser.add_argument("--zip-file", type=Path, help="Zip file path")
+    send_file_parser.add_argument(
+        "--start-index",
+        type=int,
+        default=0,
+        help="Start index (0-based)",
+    )
+    send_file_parser.add_argument(
+        "--end-index",
+        type=int,
+        default=0,
+        help="End index (0 for no limit)",
+    )
+    send_file_parser.add_argument(
+        "--batch-delay",
+        type=int,
+        default=3,
+        help="Delay between sends in seconds",
+    )
+    send_file_parser.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="Disable progress output",
+    )
+    send_file_parser.add_argument(
+        "--enable-zip",
+        action="store_true",
+        help="Process zip files when scanning directories",
+    )
+    send_file_parser.add_argument(
+        "--include",
+        action="append",
+        default=[],
+        help="Glob pattern to include (repeatable or comma-separated)",
+    )
+    send_file_parser.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        help="Glob pattern to exclude (repeatable or comma-separated)",
+    )
+    send_file_parser.add_argument(
+        "--zip-pass",
+        action="append",
+        default=[],
+        help="Zip password (repeatable)",
+    )
+    send_file_parser.add_argument(
+        "--zip-pass-file",
+        type=Path,
+        help="Path to file with zip passwords (one per line)",
+    )
+
+    send_video_parser = subparsers.add_parser(
+        "send-video", parents=[common], help="Send videos using sendVideo"
+    )
+    send_video_parser.add_argument("--file", type=Path, help="Video file path")
+    send_video_parser.add_argument("--dir", type=Path, help="Directory path")
+    send_video_parser.add_argument("--zip-file", type=Path, help="Zip file path")
+    send_video_parser.add_argument(
+        "--start-index",
+        type=int,
+        default=0,
+        help="Start index (0-based)",
+    )
+    send_video_parser.add_argument(
+        "--end-index",
+        type=int,
+        default=0,
+        help="End index (0 for no limit)",
+    )
+    send_video_parser.add_argument(
+        "--batch-delay",
+        type=int,
+        default=3,
+        help="Delay between sends in seconds",
+    )
+    send_video_parser.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="Disable progress output",
+    )
+    send_video_parser.add_argument(
+        "--enable-zip",
+        action="store_true",
+        help="Process zip files when scanning directories",
+    )
+    send_video_parser.add_argument(
+        "--include",
+        action="append",
+        default=[],
+        help="Glob pattern to include (repeatable or comma-separated)",
+    )
+    send_video_parser.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        help="Glob pattern to exclude (repeatable or comma-separated)",
+    )
+    send_video_parser.add_argument(
+        "--zip-pass",
+        action="append",
+        default=[],
+        help="Zip password (repeatable)",
+    )
+    send_video_parser.add_argument(
+        "--zip-pass-file",
+        type=Path,
+        help="Path to file with zip passwords (one per line)",
+    )
+
+    send_audio_parser = subparsers.add_parser(
+        "send-audio", parents=[common], help="Send audio using sendAudio"
+    )
+    send_audio_parser.add_argument("--file", type=Path, help="Audio file path")
+    send_audio_parser.add_argument("--dir", type=Path, help="Directory path")
+    send_audio_parser.add_argument("--zip-file", type=Path, help="Zip file path")
+    send_audio_parser.add_argument(
+        "--start-index",
+        type=int,
+        default=0,
+        help="Start index (0-based)",
+    )
+    send_audio_parser.add_argument(
+        "--end-index",
+        type=int,
+        default=0,
+        help="End index (0 for no limit)",
+    )
+    send_audio_parser.add_argument(
+        "--batch-delay",
+        type=int,
+        default=3,
+        help="Delay between sends in seconds",
+    )
+    send_audio_parser.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="Disable progress output",
+    )
+    send_audio_parser.add_argument(
+        "--enable-zip",
+        action="store_true",
+        help="Process zip files when scanning directories",
+    )
+    send_audio_parser.add_argument(
+        "--include",
+        action="append",
+        default=[],
+        help="Glob pattern to include (repeatable or comma-separated)",
+    )
+    send_audio_parser.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        help="Glob pattern to exclude (repeatable or comma-separated)",
+    )
+    send_audio_parser.add_argument(
+        "--zip-pass",
+        action="append",
+        default=[],
+        help="Zip password (repeatable)",
+    )
+    send_audio_parser.add_argument(
+        "--zip-pass-file",
+        type=Path,
+        help="Path to file with zip passwords (one per line)",
+    )
+
     watch_parser = subparsers.add_parser(
         "watch", parents=[common], help="Watch folder and send queued images"
     )
@@ -154,6 +333,26 @@ def build_parser() -> argparse.ArgumentParser:
         "--recursive",
         action="store_true",
         help="Enable recursive scan",
+    )
+    watch_parser.add_argument(
+        "--with-image",
+        action="store_true",
+        help="Send matching images (media groups)",
+    )
+    watch_parser.add_argument(
+        "--with-video",
+        action="store_true",
+        help="Send matching videos",
+    )
+    watch_parser.add_argument(
+        "--with-audio",
+        action="store_true",
+        help="Send matching audio files",
+    )
+    watch_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Send all matching files (images use media groups)",
     )
     watch_parser.add_argument(
         "--exclude",
@@ -384,16 +583,119 @@ async def run_command(args: argparse.Namespace) -> None:
             )
         return
 
+    if args.command in {"send-file", "send-video", "send-audio"}:
+        if not args.file and not args.dir and not args.zip_file:
+            raise SystemExit("Provide --file, --dir, or --zip-file")
+        send_type = {
+            "send-file": "file",
+            "send-video": "video",
+            "send-audio": "audio",
+        }[args.command]
+        zip_passwords = _load_zip_passwords(args.zip_pass, args.zip_pass_file)
+        if args.file:
+            if not args.file.exists():
+                raise SystemExit(f"File not found: {args.file}")
+            data = args.file.read_bytes()
+            if send_type == "file":
+                await send_document(
+                    url_pool,
+                    token_pool,
+                    args.chat_id,
+                    args.file.name,
+                    data,
+                    topic_id=args.topic_id,
+                    max_retries=args.max_retries,
+                    retry_delay=args.retry_delay,
+                )
+            elif send_type == "video":
+                await send_video(
+                    url_pool,
+                    token_pool,
+                    args.chat_id,
+                    args.file.name,
+                    data,
+                    topic_id=args.topic_id,
+                    max_retries=args.max_retries,
+                    retry_delay=args.retry_delay,
+                )
+            else:
+                await send_audio(
+                    url_pool,
+                    token_pool,
+                    args.chat_id,
+                    args.file.name,
+                    data,
+                    topic_id=args.topic_id,
+                    max_retries=args.max_retries,
+                    retry_delay=args.retry_delay,
+                )
+        if args.dir:
+            if not args.dir.exists():
+                raise SystemExit(f"Directory not found: {args.dir}")
+            await send_files_from_dir(
+                url_pool,
+                token_pool,
+                args.chat_id,
+                args.dir,
+                send_type=send_type,
+                topic_id=args.topic_id,
+                start_index=args.start_index,
+                end_index=args.end_index,
+                batch_delay=args.batch_delay,
+                progress=not args.no_progress,
+                include_globs=_normalize_includes(args.include),
+                exclude_globs=_normalize_excludes(args.exclude),
+                enable_zip=args.enable_zip,
+                zip_passwords=zip_passwords,
+                max_retries=args.max_retries,
+                retry_delay=args.retry_delay,
+            )
+        if args.zip_file:
+            if not args.zip_file.exists():
+                raise SystemExit(f"Zip file not found: {args.zip_file}")
+            await send_files_from_zip(
+                url_pool,
+                token_pool,
+                args.chat_id,
+                args.zip_file,
+                send_type=send_type,
+                topic_id=args.topic_id,
+                start_index=args.start_index,
+                end_index=args.end_index,
+                batch_delay=args.batch_delay,
+                progress=not args.no_progress,
+                include_globs=_normalize_includes(args.include),
+                exclude_globs=_normalize_excludes(args.exclude),
+                zip_passwords=zip_passwords,
+                max_retries=args.max_retries,
+                retry_delay=args.retry_delay,
+            )
+        return
+
     if args.command == "watch":
         if not args.watch_dir.exists():
             raise SystemExit(f"Watch directory not found: {args.watch_dir}")
 
         queue = JsonlQueue(args.queue_file)
+        with_image = args.with_image
+        with_video = args.with_video
+        with_audio = args.with_audio
+        with_all = args.all
+        if with_all:
+            with_image = True
+            with_video = True
+            with_audio = True
+        if not any([with_image, with_video, with_audio, with_all]):
+            with_image = True
         watch_config = WatchConfig(
             root=args.watch_dir,
             recursive=args.recursive,
             exclude_globs=_normalize_excludes(args.exclude),
             include_globs=_normalize_includes(args.include),
+            with_image=with_image,
+            with_video=with_video,
+            with_audio=with_audio,
+            with_all=with_all,
             scan_interval=args.scan_interval,
             settle_seconds=args.settle_seconds,
         )

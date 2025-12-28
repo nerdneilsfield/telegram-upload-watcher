@@ -32,6 +32,7 @@ class QueueItem:
     status: str
     enqueued_at: str
     updated_at: str
+    send_type: str = "image"
     error: str | None = None
 
 
@@ -133,6 +134,7 @@ class JsonlQueue:
         size: int,
         mtime_ns: int | None,
         crc: int | None = None,
+        send_type: str = "image",
     ) -> QueueItem | None:
         fingerprint = build_fingerprint(
             source_type, path, inner_path, size, mtime_ns, crc
@@ -151,6 +153,7 @@ class JsonlQueue:
             size=size,
             mtime_ns=mtime_ns,
             crc=crc,
+            send_type=send_type,
             fingerprint=fingerprint,
             status=STATUS_QUEUED,
             enqueued_at=now,

@@ -9,3 +9,26 @@ var ImageExtensions = []string{
 	".bmp",
 	".webp",
 }
+
+// VideoExtensions lists supported video file suffixes (lowercase).
+var VideoExtensions = []string{
+	".mp4",
+	".mov",
+	".mkv",
+	".webm",
+	".avi",
+	".m4v",
+	".mpeg",
+	".mpg",
+}
+
+// AudioExtensions lists supported audio file suffixes (lowercase).
+var AudioExtensions = []string{
+	".mp3",
+	".m4a",
+	".aac",
+	".ogg",
+	".opus",
+	".wav",
+	".flac",
+}
