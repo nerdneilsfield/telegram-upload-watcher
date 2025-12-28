@@ -71,13 +71,13 @@ async def _send_image_group(
         return 0
 
     try:
-    await send_media_group(
-        url_pool,
-        token_pool,
-        config.chat_id,
-        media_files,
-        topic_id=config.topic_id,
-    )
+        await send_media_group(
+            url_pool,
+            token_pool,
+            config.chat_id,
+            media_files,
+            topic_id=config.topic_id,
+        )
     except Exception as exc:
         logging.warning("send_media_group failed: %s", exc)
         for item in item_refs:
