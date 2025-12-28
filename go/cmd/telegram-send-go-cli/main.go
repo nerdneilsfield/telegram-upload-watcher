@@ -1,12 +1,11 @@
 package main
 
 import (
-	"archive/zip"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -17,7 +16,9 @@ import (
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/sender"
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/telegram"
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/watcher"
+	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/ziputil"
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/pkgs/constants"
+	zip "github.com/yeka/zip"
 )
 
 func main() {
@@ -181,6 +182,14 @@ func runSendImages(args []string) {
 	startIndex := fs.Int("start-index", 0, "Start group index (0-based)")
 	endIndex := fs.Int("end-index", 0, "End group index (0 for no limit)")
 	batchDelay := fs.Int("batch-delay", 3, "Delay between media groups (seconds)")
+	enableZip := fs.Bool("enable-zip", false, "Process zip files when scanning directories")
+	includes := &stringSlice{}
+	fs.Var(includes, "include", "Glob patterns to include (repeatable or comma-separated)")
+	excludes := &stringSlice{}
+	fs.Var(excludes, "exclude", "Glob patterns to exclude (repeatable or comma-separated)")
+	zipPasses := &stringSlice{}
+	fs.Var(zipPasses, "zip-pass", "Zip password (repeatable or comma-separated)")
+	zipPassFile := fs.String("zip-pass-file", "", "Path to file with zip passwords (one per line)")
 	fs.Parse(args)
 	cfg.retryDelay = time.Duration(*cfg.retryDelaySec) * time.Second
 
@@ -200,12 +209,44 @@ func runSendImages(args []string) {
 		log.Fatal(err)
 	}
 
+	zipPasswords, err := loadZipPasswords(zipPasses.Values(), *zipPassFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	retry := telegram.RetryConfig{MaxRetries: cfg.maxRetries, Delay: cfg.retryDelay}
 	if *imageDir != "" {
-		sendImagesFromDir(client, cfg.chatID, topicPtr(cfg), *imageDir, *groupSize, *startIndex, *endIndex, time.Duration(*batchDelay)*time.Second, retry)
+		sendImagesFromDir(
+			client,
+			cfg.chatID,
+			topicPtr(cfg),
+			*imageDir,
+			*groupSize,
+			*startIndex,
+			*endIndex,
+			time.Duration(*batchDelay)*time.Second,
+			includes.Values(),
+			excludes.Values(),
+			*enableZip,
+			zipPasswords,
+			retry,
+		)
 	}
 	if *zipFile != "" {
-		sendImagesFromZip(client, cfg.chatID, topicPtr(cfg), *zipFile, *groupSize, *startIndex, *endIndex, time.Duration(*batchDelay)*time.Second, retry)
+		sendImagesFromZip(
+			client,
+			cfg.chatID,
+			topicPtr(cfg),
+			*zipFile,
+			*groupSize,
+			*startIndex,
+			*endIndex,
+			time.Duration(*batchDelay)*time.Second,
+			includes.Values(),
+			excludes.Values(),
+			zipPasswords,
+			retry,
+		)
 	}
 }
 
@@ -215,6 +256,8 @@ func runWatch(args []string) {
 	watchDir := fs.String("watch-dir", "", "Folder to watch")
 	queueFile := fs.String("queue-file", "queue.jsonl", "Path to JSONL queue file")
 	recursive := fs.Bool("recursive", false, "Enable recursive scan")
+	includes := &stringSlice{}
+	fs.Var(includes, "include", "Glob patterns to include (repeatable or comma-separated)")
 	excludes := &stringSlice{}
 	fs.Var(excludes, "exclude", "Glob patterns to exclude (repeatable or comma-separated)")
 	scanInterval := fs.Int("scan-interval", 30, "Folder scan interval (seconds)")
@@ -229,6 +272,9 @@ func runWatch(args []string) {
 	pngStart := fs.Int("png-start-level", 8, "Initial PNG compression level (0-9)")
 	notifyEnabled := fs.Bool("notify", false, "Send watch notifications")
 	notifyInterval := fs.Int("notify-interval", 300, "Seconds between status notifications")
+	zipPasses := &stringSlice{}
+	fs.Var(zipPasses, "zip-pass", "Zip password (repeatable or comma-separated)")
+	zipPassFile := fs.String("zip-pass-file", "", "Path to file with zip passwords (one per line)")
 	fs.Parse(args)
 	cfg.retryDelay = time.Duration(*cfg.retryDelaySec) * time.Second
 
@@ -248,6 +294,11 @@ func runWatch(args []string) {
 		log.Fatal(err)
 	}
 
+	zipPasswords, err := loadZipPasswords(zipPasses.Values(), *zipPassFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	q, err := queue.New(*queueFile)
 	if err != nil {
 		log.Fatal(err)
@@ -256,6 +307,7 @@ func runWatch(args []string) {
 	watchCfg := watcher.Config{
 		Root:          *watchDir,
 		Recursive:     *recursive,
+		IncludeGlobs:  includes.Values(),
 		ExcludeGlobs:  excludes.Values(),
 		ScanInterval:  time.Duration(*scanInterval) * time.Second,
 		SettleSeconds: *settleSeconds,
@@ -274,6 +326,7 @@ func runWatch(args []string) {
 		MaxBytes:      *maxBytes,
 		PNGStartLevel: *pngStart,
 		Retry:         retry,
+		ZipPasswords:  zipPasswords,
 	}
 
 	notifyCfg := notify.Config{
@@ -291,13 +344,27 @@ func runWatch(args []string) {
 	select {}
 }
 
-func sendImagesFromDir(client *telegram.Client, chatID string, topicID *int, dir string, groupSize int, startIndex int, endIndex int, delay time.Duration, retry telegram.RetryConfig) {
+func sendImagesFromDir(client *telegram.Client, chatID string, topicID *int, dir string, groupSize int, startIndex int, endIndex int, delay time.Duration, include []string, exclude []string, enableZip bool, zipPasswords []string, retry telegram.RetryConfig) {
 	files := []string{}
 	filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
-		if isImage(path) {
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if !matchesInclude(rel, include) {
+			return nil
+		}
+		if matchesExclude(rel, exclude) {
+			return nil
+		}
+		nameLower := strings.ToLower(path)
+		if isImage(nameLower) {
+			files = append(files, path)
+		} else if enableZip && strings.HasSuffix(nameLower, ".zip") {
 			files = append(files, path)
 		}
 		return nil
@@ -320,6 +387,10 @@ func sendImagesFromDir(client *telegram.Client, chatID string, topicID *int, dir
 		}
 		if endIndex > 0 && idx >= maxIndex {
 			break
+		}
+		if strings.HasSuffix(strings.ToLower(path), ".zip") {
+			sendImagesFromZip(client, chatID, topicID, path, groupSize, 0, 0, delay, include, exclude, zipPasswords, retry)
+			continue
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -344,7 +415,7 @@ func sendImagesFromDir(client *telegram.Client, chatID string, topicID *int, dir
 	_ = client.SendMessage(chatID, fmt.Sprintf("Completed image upload from %s", dir), topicID, retry)
 }
 
-func sendImagesFromZip(client *telegram.Client, chatID string, topicID *int, zipPath string, groupSize int, startIndex int, endIndex int, delay time.Duration, retry telegram.RetryConfig) {
+func sendImagesFromZip(client *telegram.Client, chatID string, topicID *int, zipPath string, groupSize int, startIndex int, endIndex int, delay time.Duration, include []string, exclude []string, zipPasswords []string, retry telegram.RetryConfig) {
 	archive, err := zip.OpenReader(zipPath)
 	if err != nil {
 		log.Printf("invalid zip: %s", zipPath)
@@ -358,14 +429,30 @@ func sendImagesFromZip(client *telegram.Client, chatID string, topicID *int, zip
 		if file.FileInfo().IsDir() {
 			continue
 		}
-		if isImage(file.Name) {
-			names = append(names, file.Name)
-			filesByName[file.Name] = file
+		name := filepath.ToSlash(file.Name)
+		if !matchesInclude(name, include) {
+			continue
+		}
+		if matchesExclude(name, exclude) {
+			continue
+		}
+		if isImage(name) {
+			names = append(names, name)
+			filesByName[name] = file
 		}
 	}
 	if len(names) == 0 {
 		log.Printf("no images found in %s", zipPath)
 		return
+	}
+
+	first := filesByName[names[0]]
+	if first != nil {
+		if _, err := ziputil.ReadFile(first, zipPasswords); err != nil {
+			log.Printf("zip passwords failed: %s", zipPath)
+			_ = client.SendMessage(chatID, fmt.Sprintf("Skipping zip (passwords failed): %s", filepath.Base(zipPath)), topicID, retry)
+			return
+		}
 	}
 
 	_ = client.SendMessage(chatID, fmt.Sprintf("Starting image upload: %d file(s)", len(names)), topicID, retry)
@@ -385,12 +472,7 @@ func sendImagesFromZip(client *telegram.Client, chatID string, topicID *int, zip
 		if file == nil {
 			continue
 		}
-		handle, err := file.Open()
-		if err != nil {
-			continue
-		}
-		data, err := io.ReadAll(handle)
-		handle.Close()
+		data, err := ziputil.ReadFile(file, zipPasswords)
 		if err != nil {
 			continue
 		}
@@ -413,6 +495,37 @@ func sendImagesFromZip(client *telegram.Client, chatID string, topicID *int, zip
 	_ = client.SendMessage(chatID, fmt.Sprintf("Completed image upload from %s", filepath.Base(zipPath)), topicID, retry)
 }
 
+func matchesExclude(rel string, patterns []string) bool {
+	rel = path.Clean(filepath.ToSlash(rel))
+	for _, pattern := range patterns {
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" {
+			continue
+		}
+		if ok, _ := path.Match(pattern, rel); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func matchesInclude(rel string, patterns []string) bool {
+	if len(patterns) == 0 {
+		return true
+	}
+	rel = path.Clean(filepath.ToSlash(rel))
+	for _, pattern := range patterns {
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" {
+			continue
+		}
+		if ok, _ := path.Match(pattern, rel); ok {
+			return true
+		}
+	}
+	return false
+}
+
 func isImage(name string) bool {
 	name = strings.ToLower(name)
 	for _, ext := range constants.ImageExtensions {
@@ -421,6 +534,30 @@ func isImage(name string) bool {
 		}
 	}
 	return false
+}
+
+func loadZipPasswords(values []string, filePath string) ([]string, error) {
+	passwords := []string{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			passwords = append(passwords, value)
+		}
+	}
+	if filePath == "" {
+		return passwords, nil
+	}
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			passwords = append(passwords, line)
+		}
+	}
+	return passwords, nil
 }
 
 type stringSlice struct {

@@ -61,6 +61,29 @@ $CLI send-images \
   --config ./config.example.ini
 ```
 
+Send encrypted zip images / 发送加密压缩包图片:
+```bash
+$CLI send-images \
+  --chat-id "-1001234567890" \
+  --zip-file /path/to/secret.zip \
+  --zip-pass "pass1" \
+  --zip-pass "pass2" \
+  --zip-pass-file ./passwords.txt \
+  --config ./config.example.ini
+```
+
+Scan a directory with zip support / 目录扫描含 zip:
+```bash
+$CLI send-images \
+  --chat-id "-1001234567890" \
+  --image-dir /path/to/images \
+  --enable-zip \
+  --zip-pass-file ./passwords.txt \
+  --include "*.jpg" \
+  --exclude "*.tmp" \
+  --config ./config.example.ini
+```
+
 Watch folder / 监控文件夹:
 ```bash
 $CLI watch \
@@ -70,9 +93,49 @@ $CLI watch \
   --notify
 ```
 
+## Workflow / 工作流程
+The watch mode scans folders, pushes files into a queue, then sends in batches.
+watch 模式会扫描目录 -> 入队 -> 批量发送。
+
+```mermaid
+flowchart LR
+  Watcher[Watch scan] --> Queue[(Queue JSONL)]
+  Queue --> Sender[Sender loop]
+  Sender --> Telegram[Telegram API]
+  Zip[Zip file] --> Sender
+```
+
+## More examples / 更多示例
+Watch recursively with include/exclude + zip passwords / 递归监控 + 过滤 + zip 密码:
+```bash
+$CLI watch \
+  --watch-dir /data/incoming \
+  --recursive \
+  --include "*.jpg" \
+  --exclude "*.tmp" \
+  --zip-pass-file ./passwords.txt \
+  --queue-file ./queue.jsonl \
+  --chat-id "-1001234567890" \
+  --config ./config.example.ini
+```
+
+Filter files inside a zip / 过滤 zip 内部文件:
+```bash
+$CLI send-images \
+  --chat-id "-1001234567890" \
+  --zip-file /path/to/images.zip \
+  --include "*.png" \
+  --exclude "*_thumb.*" \
+  --config ./config.example.ini
+```
+
 Useful options / 常用参数:
 - `--recursive` enable recursive scan / 递归扫描
+- `--include "*.jpg"` glob includes (repeatable) / 包含规则 (可重复)
 - `--exclude "*.tmp"` glob excludes (repeatable) / 排除规则 (可重复)
+- `--enable-zip` include zip files when scanning directories / 扫描目录时处理 zip
+- `--zip-pass "secret"` zip password (repeatable; works with --zip-file/--enable-zip/watch) / zip 密码 (可重复; 适用于 --zip-file/--enable-zip/watch)
+- `--zip-pass-file passwords.txt` zip password file (one per line) / zip 密码文件 (每行一个)
 - `--topic-id 3` send to topic/thread / 发送到话题
 - `--scan-interval 30` scan interval seconds / 扫描间隔秒
 - `--send-interval 30` send interval seconds / 发送间隔秒
@@ -85,6 +148,15 @@ Useful options / 常用参数:
 - `--png-start-level 8` PNG compress start level / PNG 压缩起始等级
 - `--notify` enable watch notifications / 开启监控通知
 - `--notify-interval 300` status interval seconds / 状态通知间隔秒
+
+Note / 说明:
+`--zip-pass` and `--zip-pass-file` apply to encrypted zips found by `--enable-zip` and watch mode too.
+`--zip-pass` 和 `--zip-pass-file` 也适用于 `--enable-zip` 或 watch 扫描到的加密 zip。
+
+Filtering rules / 过滤规则:
+- If `--include` is empty, everything is included by default.
+- `--exclude` always wins (include first, then exclude).
+- `--include` 为空时默认包含全部；`--exclude` 永远优先级更高。
 
 ## Build Tools / 构建工具
 Just:

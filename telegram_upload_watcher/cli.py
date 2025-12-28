@@ -109,6 +109,34 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable progress output",
     )
+    send_images_parser.add_argument(
+        "--enable-zip",
+        action="store_true",
+        help="Process zip files when scanning directories",
+    )
+    send_images_parser.add_argument(
+        "--include",
+        action="append",
+        default=[],
+        help="Glob pattern to include (repeatable or comma-separated)",
+    )
+    send_images_parser.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        help="Glob pattern to exclude (repeatable or comma-separated)",
+    )
+    send_images_parser.add_argument(
+        "--zip-pass",
+        action="append",
+        default=[],
+        help="Zip password (repeatable)",
+    )
+    send_images_parser.add_argument(
+        "--zip-pass-file",
+        type=Path,
+        help="Path to file with zip passwords (one per line)",
+    )
 
     watch_parser = subparsers.add_parser(
         "watch", parents=[common], help="Watch folder and send queued images"
@@ -132,6 +160,23 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         help="Glob pattern to exclude (repeatable or comma-separated)",
+    )
+    watch_parser.add_argument(
+        "--include",
+        action="append",
+        default=[],
+        help="Glob pattern to include (repeatable or comma-separated)",
+    )
+    watch_parser.add_argument(
+        "--zip-pass",
+        action="append",
+        default=[],
+        help="Zip password (repeatable)",
+    )
+    watch_parser.add_argument(
+        "--zip-pass-file",
+        type=Path,
+        help="Path to file with zip passwords (one per line)",
     )
     watch_parser.add_argument(
         "--scan-interval",
@@ -256,6 +301,26 @@ def _normalize_excludes(excludes: list[str]) -> list[str]:
     return patterns
 
 
+def _normalize_includes(includes: list[str]) -> list[str]:
+    return _normalize_excludes(includes)
+
+
+def _load_zip_passwords(values: list[str], path: Path | None) -> list[str]:
+    passwords: list[str] = []
+    for value in values:
+        value = value.strip()
+        if value:
+            passwords.append(value)
+    if path:
+        if not path.exists():
+            raise SystemExit(f"Zip password file not found: {path}")
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line:
+                passwords.append(line)
+    return passwords
+
+
 async def run_command(args: argparse.Namespace) -> None:
     api_urls, tokens = _resolve_config(args)
     url_pool = UrlPool(api_urls)
@@ -290,6 +355,10 @@ async def run_command(args: argparse.Namespace) -> None:
                 end_index=args.end_index,
                 batch_delay=args.batch_delay,
                 progress=not args.no_progress,
+                include_globs=_normalize_includes(args.include),
+                exclude_globs=_normalize_excludes(args.exclude),
+                enable_zip=args.enable_zip,
+                zip_passwords=_load_zip_passwords(args.zip_pass, args.zip_pass_file),
                 max_retries=args.max_retries,
                 retry_delay=args.retry_delay,
             )
@@ -307,6 +376,9 @@ async def run_command(args: argparse.Namespace) -> None:
                 end_index=args.end_index,
                 batch_delay=args.batch_delay,
                 progress=not args.no_progress,
+                include_globs=_normalize_includes(args.include),
+                exclude_globs=_normalize_excludes(args.exclude),
+                zip_passwords=_load_zip_passwords(args.zip_pass, args.zip_pass_file),
                 max_retries=args.max_retries,
                 retry_delay=args.retry_delay,
             )
@@ -321,6 +393,7 @@ async def run_command(args: argparse.Namespace) -> None:
             root=args.watch_dir,
             recursive=args.recursive,
             exclude_globs=_normalize_excludes(args.exclude),
+            include_globs=_normalize_includes(args.include),
             scan_interval=args.scan_interval,
             settle_seconds=args.settle_seconds,
         )
@@ -344,7 +417,15 @@ async def run_command(args: argparse.Namespace) -> None:
 
         tasks = [
             watch_loop(watch_config, queue),
-            sender_loop(sender_config, queue, url_pool, token_pool),
+            sender_loop(
+                sender_config,
+                queue,
+                url_pool,
+                token_pool,
+                zip_passwords=_load_zip_passwords(
+                    args.zip_pass, args.zip_pass_file
+                ),
+            ),
         ]
         if notify_config.enabled:
             tasks.append(

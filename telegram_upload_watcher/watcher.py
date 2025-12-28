@@ -17,6 +17,7 @@ from .queue import JsonlQueue, build_fingerprint, build_source_fingerprint
 class WatchConfig:
     root: Path
     recursive: bool
+    include_globs: list[str]
     exclude_globs: list[str]
     scan_interval: int
     settle_seconds: int
@@ -50,6 +51,17 @@ class StabilityTracker:
                 self.state.pop(path, None)
 
 
+def _matches_include(rel_path: str, patterns: list[str]) -> bool:
+    if not patterns:
+        return True
+    for pattern in patterns:
+        if not pattern:
+            continue
+        if fnmatch.fnmatch(rel_path, pattern):
+            return True
+    return False
+
+
 def _matches_exclude(rel_path: str, patterns: list[str]) -> bool:
     for pattern in patterns:
         if not pattern:
@@ -59,7 +71,12 @@ def _matches_exclude(rel_path: str, patterns: list[str]) -> bool:
     return False
 
 
-def _iter_files(root: Path, recursive: bool, exclude_globs: list[str]) -> list[Path]:
+def _iter_files(
+    root: Path,
+    recursive: bool,
+    include_globs: list[str],
+    exclude_globs: list[str],
+) -> list[Path]:
     files: list[Path] = []
     if recursive:
         for base, dirs, filenames in os.walk(root):
@@ -68,12 +85,17 @@ def _iter_files(root: Path, recursive: bool, exclude_globs: list[str]) -> list[P
             dirs[:] = [
                 dirname
                 for dirname in dirs
-                if not _matches_exclude(
+                if _matches_include(
+                    str(Path(rel_dir) / dirname).lstrip("./"), include_globs
+                )
+                and not _matches_exclude(
                     str(Path(rel_dir) / dirname).lstrip("./"), exclude_globs
                 )
             ]
             for filename in filenames:
                 rel_file = str(Path(rel_dir) / filename).lstrip("./")
+                if not _matches_include(rel_file, include_globs):
+                    continue
                 if _matches_exclude(rel_file, exclude_globs):
                     continue
                 files.append(base_path / filename)
@@ -82,6 +104,8 @@ def _iter_files(root: Path, recursive: bool, exclude_globs: list[str]) -> list[P
             if entry.is_dir():
                 continue
             rel_file = entry.name
+            if not _matches_include(rel_file, include_globs):
+                continue
             if _matches_exclude(rel_file, exclude_globs):
                 continue
             files.append(entry)
@@ -116,6 +140,7 @@ def _enqueue_zip(
     zip_path: Path,
     size: int,
     mtime_ns: int,
+    include_globs: list[str],
     exclude_globs: list[str],
 ) -> int:
     source_path = str(zip_path)
@@ -130,6 +155,8 @@ def _enqueue_zip(
                 if info.is_dir():
                     continue
                 inner_path = info.filename
+                if not _matches_include(inner_path, include_globs):
+                    continue
                 if _matches_exclude(inner_path, exclude_globs):
                     continue
                 if not inner_path.lower().endswith(IMAGE_EXTENSIONS):
@@ -153,7 +180,12 @@ def _enqueue_zip(
 
 def scan_once(config: WatchConfig, queue: JsonlQueue, tracker: StabilityTracker) -> int:
     root = config.root
-    candidates = _iter_files(root, config.recursive, config.exclude_globs)
+    candidates = _iter_files(
+        root,
+        config.recursive,
+        config.include_globs,
+        config.exclude_globs,
+    )
     seen: set[Path] = set()
     enqueued = 0
 
@@ -182,7 +214,12 @@ def scan_once(config: WatchConfig, queue: JsonlQueue, tracker: StabilityTracker)
             if not tracker.is_stable(path, stat.st_size, stat.st_mtime_ns):
                 continue
             enqueued += _enqueue_zip(
-                queue, path, stat.st_size, stat.st_mtime_ns, config.exclude_globs
+                queue,
+                path,
+                stat.st_size,
+                stat.st_mtime_ns,
+                config.include_globs,
+                config.exclude_globs,
             )
         else:
             if not tracker.is_stable(path, stat.st_size, stat.st_mtime_ns):

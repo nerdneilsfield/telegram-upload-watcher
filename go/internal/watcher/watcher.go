@@ -16,6 +16,7 @@ import (
 type Config struct {
 	Root          string
 	Recursive     bool
+	IncludeGlobs  []string
 	ExcludeGlobs  []string
 	ScanInterval  time.Duration
 	SettleSeconds int
@@ -79,6 +80,23 @@ func matchesExclude(rel string, patterns []string) bool {
 	return false
 }
 
+func matchesInclude(rel string, patterns []string) bool {
+	if len(patterns) == 0 {
+		return true
+	}
+	rel = path.Clean(filepath.ToSlash(rel))
+	for _, pattern := range patterns {
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" {
+			continue
+		}
+		if ok, _ := path.Match(pattern, rel); ok {
+			return true
+		}
+	}
+	return false
+}
+
 func isImage(name string) bool {
 	name = strings.ToLower(name)
 	for _, ext := range constants.ImageExtensions {
@@ -115,7 +133,7 @@ func scanOnce(cfg Config, q *queue.Queue, tracker *stabilityTracker) int {
 			if !tracker.isStable(path, info.Size(), mtimeNS) {
 				return
 			}
-			enqueued += enqueueZip(q, path, info, cfg.ExcludeGlobs)
+			enqueued += enqueueZip(q, path, info, cfg.IncludeGlobs, cfg.ExcludeGlobs)
 			return
 		}
 
@@ -148,6 +166,12 @@ func scanOnce(cfg Config, q *queue.Queue, tracker *stabilityTracker) int {
 			if err != nil {
 				return nil
 			}
+			if !matchesInclude(rel, cfg.IncludeGlobs) {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
 			if matchesExclude(rel, cfg.ExcludeGlobs) {
 				if d.IsDir() {
 					return filepath.SkipDir
@@ -173,6 +197,9 @@ func scanOnce(cfg Config, q *queue.Queue, tracker *stabilityTracker) int {
 			if entry.IsDir() {
 				continue
 			}
+			if !matchesInclude(entry.Name(), cfg.IncludeGlobs) {
+				continue
+			}
 			if matchesExclude(entry.Name(), cfg.ExcludeGlobs) {
 				continue
 			}
@@ -188,7 +215,7 @@ func scanOnce(cfg Config, q *queue.Queue, tracker *stabilityTracker) int {
 	return enqueued
 }
 
-func enqueueZip(q *queue.Queue, zipPath string, info os.FileInfo, exclude []string) int {
+func enqueueZip(q *queue.Queue, zipPath string, info os.FileInfo, include []string, exclude []string) int {
 	count := 0
 	sourceFingerprint := queue.BuildSourceFingerprint(zipPath, info.Size(), ptrInt64(info.ModTime().UnixNano()))
 	if q.HasSourceFingerprint("zip", sourceFingerprint) {
@@ -207,6 +234,9 @@ func enqueueZip(q *queue.Queue, zipPath string, info os.FileInfo, exclude []stri
 			continue
 		}
 		inner := path.Clean(filepath.ToSlash(file.Name))
+		if !matchesInclude(inner, include) {
+			continue
+		}
 		if matchesExclude(inner, exclude) {
 			continue
 		}

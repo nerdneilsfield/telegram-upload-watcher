@@ -4,9 +4,9 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-import zipfile
 
 from .image_processing import prepare_image_bytes
+from .telegram import open_zip_entry
 from .queue import JsonlQueue, QueueItem, STATUS_FAILED, STATUS_SENDING, STATUS_SENT
 from .telegram import send_media_group
 from .pools import TokenPool, UrlPool
@@ -26,18 +26,15 @@ class SenderConfig:
     png_start_level: int
 
 
-def _load_item_bytes(item: QueueItem) -> tuple[bytes, str]:
+def _load_item_bytes(item: QueueItem, zip_passwords: list[str]) -> tuple[bytes, str]:
     if item.source_type == "file":
         path = Path(item.path)
         return path.read_bytes(), path.name
 
     if item.source_type == "zip":
         zip_path = Path(item.path)
-        with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            with zip_ref.open(item.inner_path or "") as handle:
-                data = handle.read()
-        filename = Path(item.inner_path or "image").name
-        return data, filename
+        data, name = open_zip_entry(zip_path, item.inner_path, zip_passwords)
+        return data, name
 
     raise ValueError(f"Unsupported source_type: {item.source_type}")
 
@@ -48,6 +45,7 @@ async def _send_group(
     url_pool: UrlPool,
     token_pool: TokenPool,
     items: list[QueueItem],
+    zip_passwords: list[str],
 ) -> int:
     media_files: list[tuple[str, bytes]] = []
     item_refs: list[QueueItem] = []
@@ -55,7 +53,7 @@ async def _send_group(
     for item in items:
         queue.update_status(item.id, STATUS_SENDING)
         try:
-            data, filename = _load_item_bytes(item)
+            data, filename = _load_item_bytes(item, zip_passwords)
             processed, send_name = prepare_image_bytes(
                 data,
                 filename,
@@ -96,7 +94,9 @@ async def sender_loop(
     queue: JsonlQueue,
     url_pool: UrlPool,
     token_pool: TokenPool,
+    zip_passwords: list[str] | None = None,
 ) -> None:
+    zip_passwords = zip_passwords or []
     sent_since_pause = 0
     while True:
         pending = queue.get_pending()
@@ -106,7 +106,9 @@ async def sender_loop(
 
         for idx in range(0, len(pending), config.group_size):
             group = pending[idx : idx + config.group_size]
-            sent_count = await _send_group(config, queue, url_pool, token_pool, group)
+            sent_count = await _send_group(
+                config, queue, url_pool, token_pool, group, zip_passwords
+            )
             sent_since_pause += sent_count
             await asyncio.sleep(config.batch_delay)
 

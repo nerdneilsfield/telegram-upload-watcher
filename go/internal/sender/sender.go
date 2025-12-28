@@ -1,9 +1,7 @@
 package sender
 
 import (
-	"archive/zip"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -12,6 +10,8 @@ import (
 	imageutil "github.com/nerdneilsfield/telegram-upload-watcher/go/internal/image"
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/queue"
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/telegram"
+	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/ziputil"
+	zip "github.com/yeka/zip"
 )
 
 type Config struct {
@@ -26,6 +26,7 @@ type Config struct {
 	MaxBytes      int
 	PNGStartLevel int
 	Retry         telegram.RetryConfig
+	ZipPasswords  []string
 }
 
 func Loop(cfg Config, q *queue.Queue, client *telegram.Client) {
@@ -66,7 +67,7 @@ func sendGroup(cfg Config, q *queue.Queue, client *telegram.Client, items []*que
 		if err := q.UpdateStatus(item.ID, queue.StatusSending, nil); err != nil {
 			continue
 		}
-		data, filename, err := loadItem(item)
+		data, filename, err := loadItem(item, cfg.ZipPasswords)
 		if err != nil {
 			msg := err.Error()
 			q.UpdateStatus(item.ID, queue.StatusFailed, &msg)
@@ -100,7 +101,7 @@ func sendGroup(cfg Config, q *queue.Queue, client *telegram.Client, items []*que
 	return len(itemRefs)
 }
 
-func loadItem(item *queue.Item) ([]byte, string, error) {
+func loadItem(item *queue.Item, zipPasswords []string) ([]byte, string, error) {
 	switch item.SourceType {
 	case "file":
 		data, err := os.ReadFile(item.Path)
@@ -121,12 +122,7 @@ func loadItem(item *queue.Item) ([]byte, string, error) {
 			if filepath.ToSlash(file.Name) != filepath.ToSlash(*item.InnerPath) {
 				continue
 			}
-			handle, err := file.Open()
-			if err != nil {
-				return nil, "", err
-			}
-			defer handle.Close()
-			data, err := io.ReadAll(handle)
+			data, err := ziputil.ReadFile(file, zipPasswords)
 			if err != nil {
 				return nil, "", err
 			}

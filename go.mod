@@ -13,6 +13,8 @@ require (
 	github.com/klauspost/compress v1.17.9 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
+	github.com/yeka/zip v0.0.0-20231116150916-03d6312748a9 // indirect
+	golang.org/x/crypto v0.24.0 // indirect
 	golang.org/x/image v0.0.0-20191009234506-e7c1f5e7dbb8 // indirect
 	golang.org/x/net v0.26.0 // indirect
 	golang.org/x/text v0.16.0 // indirect
