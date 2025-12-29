@@ -59,6 +59,13 @@ func (a *App) SaveSettings(bundle SettingsBundle) error {
 	return gui.SaveTelegramConfig(bundle.Settings.ConfigPath, bundle.Telegram)
 }
 
+func (a *App) LoadTelegramConfig(path string) (gui.TelegramConfig, error) {
+	if path == "" {
+		return gui.TelegramConfig{}, errors.New("config path is required")
+	}
+	return gui.LoadTelegramConfig(path)
+}
+
 func (a *App) PickFile(title string, defaultDir string) (string, error) {
 	if a.ctx == nil {
 		return "", errors.New("app not ready")

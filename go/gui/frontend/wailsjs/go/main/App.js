@@ -6,6 +6,10 @@ export function LoadSettings() {
   return window['go']['main']['App']['LoadSettings']();
 }
 
+export function LoadTelegramConfig(arg1) {
+  return window['go']['main']['App']['LoadTelegramConfig'](arg1);
+}
+
 export function PauseRun() {
   return window['go']['main']['App']['PauseRun']();
 }

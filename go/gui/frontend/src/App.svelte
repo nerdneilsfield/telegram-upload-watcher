@@ -3,6 +3,7 @@
   import { EventsOn } from '../wailsjs/runtime/runtime';
   import {
     LoadSettings,
+    LoadTelegramConfig,
     SaveSettings,
     StartRun,
     StartSendImages,
@@ -73,6 +74,7 @@
 
   type TabId = (typeof tabs)[number]['id'];
   let activeTab: TabId = 'watch';
+  $: activeTabLabelText = tabs.find((tab) => tab.id === activeTab)?.label ?? 'Mode';
 
   let sendImageDir = '';
   let sendImageZip = '';
@@ -201,6 +203,17 @@
     }
   };
 
+  const loadTelegramFromPath = async (path: string) => {
+    if (!path) return;
+    try {
+      const cfg = await LoadTelegramConfig(path);
+      bundle.telegram = cfg;
+      hydrateForm();
+    } catch (err) {
+      message = `Load config failed: ${String(err)}`;
+    }
+  };
+
   const save = async () => {
     message = '';
     try {
@@ -296,11 +309,12 @@
     }
   };
 
-  const activeTabLabel = () => tabs.find((tab) => tab.id === activeTab)?.label ?? 'Mode';
-
   const pickConfigPath = async () => {
     const result = await openFileDialog('Select config file', bundle.settings.config_path);
-    if (result) bundle.settings.config_path = result;
+    if (result) {
+      bundle.settings.config_path = result;
+      await loadTelegramFromPath(result);
+    }
   };
 
   const pickWatchDir = async () => {
@@ -371,7 +385,7 @@
       <fluent-card class="space-y-6">
         <div>
           <h2 class="text-xl font-semibold text-slate-900">Mode</h2>
-          <p class="mt-1 text-sm text-slate-500">Active: {activeTabLabel()}</p>
+          <p class="mt-1 text-sm text-slate-500">Active: {activeTabLabelText}</p>
         </div>
 
         <div class="flex flex-wrap gap-2" role="tablist">
@@ -753,6 +767,7 @@
                     value={bundle.settings.config_path}
                     placeholder="/path/to/config.ini"
                     on:input={(event) => (bundle.settings.config_path = event.target.value)}
+                    on:change={() => loadTelegramFromPath(bundle.settings.config_path)}
                   />
                   <fluent-button appearance="outline" on:click={pickConfigPath}>Browse</fluent-button>
                 </div>
@@ -807,7 +822,7 @@
 
         <fluent-card>
           <h2 class="text-xl font-semibold text-slate-900">Run controls</h2>
-          <p class="mt-1 text-sm text-slate-500">Active mode: {activeTabLabel()}</p>
+          <p class="mt-1 text-sm text-slate-500">Active mode: {activeTabLabelText}</p>
           <div class="mt-4 flex flex-wrap gap-3">
             <fluent-button appearance="accent" on:click={startAction} disabled={status.running}>
               {activeTab === 'watch' ? 'Start watch' : 'Start send'}
