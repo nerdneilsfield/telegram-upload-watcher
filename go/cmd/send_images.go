@@ -291,28 +291,19 @@ func sendImagesFromZip(client *telegram.Client, chatID string, topicID *int, zip
 	}
 
 	zipOpts := ziputil.ReadOptions{LogPasswords: logZipPasswords}
-	first := filesByName[names[0]]
-	if first != nil {
-		if _, err := ziputil.ReadFileWithOptions(first, zipPasswords, zipOpts); err != nil {
-			log.Printf(
-				"zip password check failed: %s (file=%s, encrypted=%t, flags=0x%x, method=%d, comp=%d, uncomp=%d, crc=0x%x, err=%v)",
-				zipPath,
-				first.Name,
-				ziputil.IsEncrypted(first),
-				first.Flags,
-				ziputil.EffectiveMethod(first),
-				first.CompressedSize64,
-				first.UncompressedSize64,
-				first.CRC32,
-				err,
-			)
-			_ = client.SendMessage(chatID, fmt.Sprintf("Skipping zip (passwords failed): %s", filepath.Base(zipPath)), topicID, retry)
-			return
-		}
-	}
 
 	startedAt := time.Now()
-	_ = client.SendMessage(chatID, fmt.Sprintf("Starting image upload: %d file(s) at %s", len(names), formatTimestamp(startedAt)), topicID, retry)
+	_ = client.SendMessage(
+		chatID,
+		fmt.Sprintf(
+			"Starting image upload from %s: %d file(s) at %s",
+			filepath.Base(zipPath),
+			len(names),
+			formatTimestamp(startedAt),
+		),
+		topicID,
+		retry,
+	)
 
 	minIndex := startIndex * groupSize
 	maxIndex := endIndex * groupSize
@@ -325,6 +316,8 @@ func sendImagesFromZip(client *telegram.Client, chatID string, topicID *int, zip
 	sent := 0
 	skipped := 0
 	sentBytes := int64(0)
+	readErrors := 0
+	var lastReadErr error
 
 	for idx, name := range names {
 		if idx < rangeStart {
@@ -342,6 +335,8 @@ func sendImagesFromZip(client *telegram.Client, chatID string, topicID *int, zip
 		}
 		data, err := ziputil.ReadFileWithOptions(file, zipPasswords, zipOpts)
 		if err != nil {
+			readErrors++
+			lastReadErr = err
 			processed++
 			skipped++
 			progressState.Print(processed, sent, skipped, false)
@@ -385,6 +380,9 @@ func sendImagesFromZip(client *telegram.Client, chatID string, topicID *int, zip
 		processed += len(media)
 	}
 	progressState.Print(processed, sent, skipped, true)
+	if sent == 0 && readErrors > 0 {
+		log.Printf("zip read failed for all entries: %s (last=%v)", zipPath, lastReadErr)
+	}
 
 	finishedAt := time.Now()
 	elapsed := finishedAt.Sub(startedAt)
