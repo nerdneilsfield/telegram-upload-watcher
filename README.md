@@ -58,6 +58,14 @@ $CLI send-images \
   --config ./config.example.ini
 ```
 
+Compress images in a folder / 压缩文件夹图片:
+```bash
+uv run telegram-compress-images /path/in /path/out \
+  --max-dimension 2000 \
+  --max-size 1M \
+  --workers 4
+```
+
 Send multiple image sources / 发送多个图片来源:
 ```bash
 $CLI send-images \
