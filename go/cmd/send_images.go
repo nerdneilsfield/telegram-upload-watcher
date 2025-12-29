@@ -19,8 +19,8 @@ import (
 
 func newSendImagesCmd() *cobra.Command {
 	cfg := &commonFlags{}
-	var imageDir string
-	var zipFile string
+	imageDirs := &stringSlice{}
+	zipFiles := &stringSlice{}
 	var groupSize int
 	var startIndex int
 	var endIndex int
@@ -45,7 +45,7 @@ func newSendImagesCmd() *cobra.Command {
 			if cfg.chatID == "" {
 				return fmt.Errorf("chat-id is required")
 			}
-			if imageDir == "" && zipFile == "" {
+			if len(imageDirs.Values()) == 0 && len(zipFiles.Values()) == 0 {
 				return fmt.Errorf("image-dir or zip-file is required")
 			}
 
@@ -64,7 +64,7 @@ func newSendImagesCmd() *cobra.Command {
 			}
 
 			retry := telegram.RetryConfig{MaxRetries: cfg.maxRetries, Delay: cfg.retryDelay}
-			if imageDir != "" {
+			for _, imageDir := range imageDirs.Values() {
 				sendImagesFromDir(
 					client,
 					cfg.chatID,
@@ -85,7 +85,7 @@ func newSendImagesCmd() *cobra.Command {
 					retry,
 				)
 			}
-			if zipFile != "" {
+			for _, zipFile := range zipFiles.Values() {
 				sendImagesFromZip(
 					client,
 					cfg.chatID,
@@ -111,8 +111,8 @@ func newSendImagesCmd() *cobra.Command {
 
 	bindCommonFlags(cmd, cfg)
 	flags := cmd.Flags()
-	flags.StringVar(&imageDir, "image-dir", "", "Image directory")
-	flags.StringVar(&zipFile, "zip-file", "", "Zip file path")
+	flags.Var(imageDirs, "image-dir", "Image directory (repeatable or comma-separated)")
+	flags.Var(zipFiles, "zip-file", "Zip file path (repeatable or comma-separated)")
 	flags.IntVar(&groupSize, "group-size", 4, "Images per media group")
 	flags.IntVar(&startIndex, "start-index", 0, "Start group index (0-based)")
 	flags.IntVar(&endIndex, "end-index", 0, "End group index (0 for no limit)")

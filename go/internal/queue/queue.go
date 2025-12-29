@@ -37,18 +37,53 @@ type Meta struct {
 	Params  MetaParams `json:"params"`
 }
 
+type WatchDirs []string
+
+func (w *WatchDirs) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 || string(data) == "null" {
+		*w = nil
+		return nil
+	}
+	if data[0] == '"' {
+		var value string
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			*w = nil
+			return nil
+		}
+		*w = WatchDirs{value}
+		return nil
+	}
+	var values []string
+	if err := json.Unmarshal(data, &values); err != nil {
+		return err
+	}
+	cleaned := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			cleaned = append(cleaned, value)
+		}
+	}
+	*w = WatchDirs(cleaned)
+	return nil
+}
+
 type MetaParams struct {
-	Command   string   `json:"command"`
-	WatchDir  string   `json:"watch_dir"`
-	Recursive bool     `json:"recursive"`
-	ChatID    string   `json:"chat_id"`
-	TopicID   *int     `json:"topic_id,omitempty"`
-	WithImage bool     `json:"with_image"`
-	WithVideo bool     `json:"with_video"`
-	WithAudio bool     `json:"with_audio"`
-	WithAll   bool     `json:"with_all"`
-	Include   []string `json:"include,omitempty"`
-	Exclude   []string `json:"exclude,omitempty"`
+	Command   string    `json:"command"`
+	WatchDir  WatchDirs `json:"watch_dir"`
+	Recursive bool      `json:"recursive"`
+	ChatID    string    `json:"chat_id"`
+	TopicID   *int      `json:"topic_id,omitempty"`
+	WithImage bool      `json:"with_image"`
+	WithVideo bool      `json:"with_video"`
+	WithAudio bool      `json:"with_audio"`
+	WithAll   bool      `json:"with_all"`
+	Include   []string  `json:"include,omitempty"`
+	Exclude   []string  `json:"exclude,omitempty"`
 }
 
 type Item struct {
@@ -127,11 +162,30 @@ func normalizeMeta(meta *Meta) *Meta {
 	if copyMeta.Version == 0 {
 		copyMeta.Version = MetaVersion
 	}
+	copyMeta.Params.WatchDir = normalizeWatchDirs(meta.Params.WatchDir)
 	copyMeta.Params.Include = append([]string{}, meta.Params.Include...)
 	copyMeta.Params.Exclude = append([]string{}, meta.Params.Exclude...)
 	sort.Strings(copyMeta.Params.Include)
 	sort.Strings(copyMeta.Params.Exclude)
 	return &copyMeta
+}
+
+func normalizeWatchDirs(dirs WatchDirs) WatchDirs {
+	if len(dirs) == 0 {
+		return nil
+	}
+	cleaned := make([]string, 0, len(dirs))
+	for _, dir := range dirs {
+		dir = strings.TrimSpace(dir)
+		if dir != "" {
+			cleaned = append(cleaned, dir)
+		}
+	}
+	sort.Strings(cleaned)
+	if len(cleaned) == 0 {
+		return nil
+	}
+	return WatchDirs(cleaned)
 }
 
 func parseMeta(line string) (*Meta, bool, error) {

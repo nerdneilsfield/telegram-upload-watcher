@@ -15,7 +15,7 @@ import (
 
 func newWatchCmd() *cobra.Command {
 	cfg := &commonFlags{}
-	var watchDir string
+	watchDirs := &stringSlice{}
 	var queueFile string
 	var recursive bool
 	var withImage bool
@@ -49,7 +49,7 @@ func newWatchCmd() *cobra.Command {
 			if cfg.chatID == "" {
 				return fmt.Errorf("chat-id is required")
 			}
-			if watchDir == "" {
+			if len(watchDirs.Values()) == 0 {
 				return fmt.Errorf("watch-dir is required")
 			}
 
@@ -76,14 +76,26 @@ func newWatchCmd() *cobra.Command {
 				withImage = true
 			}
 
-			absWatchDir, err := filepath.Abs(watchDir)
-			if err != nil {
-				return err
+			absWatchDirs := make([]string, 0, len(watchDirs.Values()))
+			seen := map[string]struct{}{}
+			for _, watchDir := range watchDirs.Values() {
+				absWatchDir, err := filepath.Abs(watchDir)
+				if err != nil {
+					return err
+				}
+				if _, ok := seen[absWatchDir]; ok {
+					continue
+				}
+				seen[absWatchDir] = struct{}{}
+				absWatchDirs = append(absWatchDirs, absWatchDir)
+			}
+			if len(absWatchDirs) == 0 {
+				return fmt.Errorf("watch-dir is required")
 			}
 			q, err := queue.New(queueFile, &queue.Meta{
 				Params: queue.MetaParams{
 					Command:   "watch",
-					WatchDir:  absWatchDir,
+					WatchDir:  queue.WatchDirs(absWatchDirs),
 					Recursive: recursive,
 					ChatID:    cfg.chatID,
 					TopicID:   topicPtr(cfg),
@@ -99,17 +111,20 @@ func newWatchCmd() *cobra.Command {
 				return err
 			}
 
-			watchCfg := watcher.Config{
-				Root:          watchDir,
-				Recursive:     recursive,
-				IncludeGlobs:  includes.Values(),
-				ExcludeGlobs:  excludes.Values(),
-				WithImage:     withImage,
-				WithVideo:     withVideo,
-				WithAudio:     withAudio,
-				WithAll:       withAll,
-				ScanInterval:  time.Duration(scanInterval) * time.Second,
-				SettleSeconds: settleSeconds,
+			watchConfigs := make([]watcher.Config, 0, len(absWatchDirs))
+			for _, watchDir := range absWatchDirs {
+				watchConfigs = append(watchConfigs, watcher.Config{
+					Root:          watchDir,
+					Recursive:     recursive,
+					IncludeGlobs:  includes.Values(),
+					ExcludeGlobs:  excludes.Values(),
+					WithImage:     withImage,
+					WithVideo:     withVideo,
+					WithAudio:     withAudio,
+					WithAll:       withAll,
+					ScanInterval:  time.Duration(scanInterval) * time.Second,
+					SettleSeconds: settleSeconds,
+				})
 			}
 
 			retry := telegram.RetryConfig{MaxRetries: cfg.maxRetries, Delay: cfg.retryDelay}
@@ -134,7 +149,9 @@ func newWatchCmd() *cobra.Command {
 				NotifyOnIdle: true,
 			}
 
-			go watcher.WatchLoop(watchCfg, q)
+			for _, watchCfg := range watchConfigs {
+				go watcher.WatchLoop(watchCfg, q)
+			}
 			go sender.Loop(sendCfg, q, client)
 			if notifyCfg.Enabled {
 				go notify.Loop(notifyCfg, q, client, cfg.chatID, topicPtr(cfg))
@@ -146,7 +163,7 @@ func newWatchCmd() *cobra.Command {
 
 	bindCommonFlags(cmd, cfg)
 	flags := cmd.Flags()
-	flags.StringVar(&watchDir, "watch-dir", "", "Folder to watch")
+	flags.Var(watchDirs, "watch-dir", "Folder to watch (repeatable or comma-separated)")
 	flags.StringVar(&queueFile, "queue-file", "queue.jsonl", "Path to JSONL queue file")
 	flags.BoolVar(&recursive, "recursive", false, "Enable recursive scan")
 	flags.BoolVar(&withImage, "with-image", false, "Send matching images (media groups)")

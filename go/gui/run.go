@@ -62,7 +62,7 @@ func (a *App) StartRun(bundle SettingsBundle) error {
 	meta := &queue.Meta{
 		Params: queue.MetaParams{
 			Command:   "watch",
-			WatchDir:  absWatchDir,
+			WatchDir:  queue.WatchDirs{absWatchDir},
 			Recursive: settings.Recursive,
 			ChatID:    settings.ChatID,
 			TopicID:   settings.TopicID,
@@ -91,7 +91,7 @@ func (a *App) StartRun(bundle SettingsBundle) error {
 	}
 
 	watchCfg := watcher.Config{
-		Root:          settings.WatchDir,
+		Root:          absWatchDir,
 		Recursive:     settings.Recursive,
 		IncludeGlobs:  settings.Include,
 		ExcludeGlobs:  settings.Exclude,
