@@ -206,7 +206,18 @@ func sendFilesFromZip(client *telegram.Client, chatID string, topicID *int, zipP
 	first := filesByName[names[0]]
 	if first != nil {
 		if _, err := ziputil.ReadFile(first, zipPasswords); err != nil {
-			log.Printf("zip password check failed: %s (encrypted=%t, method=%d, err=%v)", zipPath, first.IsEncrypted(), first.Method, err)
+			log.Printf(
+				"zip password check failed: %s (file=%s, encrypted=%t, flags=0x%x, method=%d, comp=%d, uncomp=%d, crc=0x%x, err=%v)",
+				zipPath,
+				first.Name,
+				first.IsEncrypted(),
+				first.Flags,
+				first.Method,
+				first.CompressedSize64,
+				first.UncompressedSize64,
+				first.CRC32,
+				err,
+			)
 			_ = client.SendMessage(chatID, fmt.Sprintf("Skipping zip (passwords failed): %s", filepath.Base(zipPath)), topicID, retry)
 			return
 		}

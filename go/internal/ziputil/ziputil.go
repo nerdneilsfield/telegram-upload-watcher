@@ -21,6 +21,7 @@ func ReadFile(file *zip.File, passwords []string) ([]byte, error) {
 	}
 
 	var lastErr error
+	var attemptErrors []string
 	attempts := 0
 	for _, password := range passwords {
 		password = strings.TrimSpace(password)
@@ -34,9 +35,17 @@ func ReadFile(file *zip.File, passwords []string) ([]byte, error) {
 			return data, nil
 		}
 		lastErr = err
+		attemptErrors = append(attemptErrors, classifyErr(err))
 	}
 	if lastErr == nil {
 		lastErr = errors.New("zip passwords exhausted")
+	}
+	if len(attemptErrors) > 0 {
+		return nil, fmt.Errorf(
+			"zip password check failed after %d attempt(s): %s",
+			attempts,
+			strings.Join(attemptErrors, "; "),
+		)
 	}
 	return nil, fmt.Errorf("zip password check failed after %d attempt(s): %w", attempts, lastErr)
 }
@@ -56,4 +65,20 @@ func readOnce(file *zip.File) (data []byte, err error) {
 	}
 	defer handle.Close()
 	return io.ReadAll(handle)
+}
+
+func classifyErr(err error) string {
+	if err == nil {
+		return ""
+	}
+	switch {
+	case errors.Is(err, zip.ErrPassword):
+		return "invalid password"
+	case errors.Is(err, zip.ErrChecksum):
+		return "checksum error (likely wrong password)"
+	case errors.Is(err, zip.ErrAlgorithm):
+		return "unsupported compression algorithm"
+	default:
+		return err.Error()
+	}
 }
