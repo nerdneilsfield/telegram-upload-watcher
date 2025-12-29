@@ -30,7 +30,7 @@ func newSendAudioCmd() *cobra.Command {
 func newSendFilesCmd(use string, short string, sendType string) *cobra.Command {
 	cfg := &commonFlags{}
 	var filePath string
-	var dirPath string
+	dirPaths := &stringSlice{}
 	zipPaths := &stringSlice{}
 	var startIndex int
 	var endIndex int
@@ -52,7 +52,7 @@ func newSendFilesCmd(use string, short string, sendType string) *cobra.Command {
 			if cfg.chatID == "" {
 				return fmt.Errorf("chat-id is required")
 			}
-			if filePath == "" && dirPath == "" && len(zipPaths.Values()) == 0 {
+			if filePath == "" && len(dirPaths.Values()) == 0 && len(zipPaths.Values()) == 0 {
 				return fmt.Errorf("file, dir, or zip-file is required")
 			}
 
@@ -115,7 +115,7 @@ func newSendFilesCmd(use string, short string, sendType string) *cobra.Command {
 				)
 				printSummary(label, filename, startedAt, finishedAt, elapsed, 1, 0, sentBytes)
 			}
-			if dirPath != "" {
+			for _, dirPath := range dirPaths.Values() {
 				sendFilesFromDir(
 					client,
 					cfg.chatID,
@@ -157,7 +157,7 @@ func newSendFilesCmd(use string, short string, sendType string) *cobra.Command {
 	bindCommonFlags(cmd, cfg)
 	flags := cmd.Flags()
 	flags.StringVar(&filePath, "file", "", "File path")
-	flags.StringVar(&dirPath, "dir", "", "Directory path")
+	flags.Var(dirPaths, "dir", "Directory path (repeatable or comma-separated)")
 	flags.Var(zipPaths, "zip-file", "Zip file path (repeatable or comma-separated)")
 	flags.IntVar(&startIndex, "start-index", 0, "Start index (0-based)")
 	flags.IntVar(&endIndex, "end-index", 0, "End index (0 for no limit)")

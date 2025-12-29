@@ -159,7 +159,13 @@ def build_parser() -> argparse.ArgumentParser:
         "send-file", parents=[common], help="Send files using sendDocument"
     )
     send_file_parser.add_argument("--file", type=Path, help="File path")
-    send_file_parser.add_argument("--dir", type=Path, help="Directory path")
+    send_file_parser.add_argument(
+        "--dir",
+        type=Path,
+        action="append",
+        default=[],
+        help="Directory path (repeatable)",
+    )
     send_file_parser.add_argument(
         "--zip-file",
         type=Path,
@@ -223,7 +229,13 @@ def build_parser() -> argparse.ArgumentParser:
         "send-video", parents=[common], help="Send videos using sendVideo"
     )
     send_video_parser.add_argument("--file", type=Path, help="Video file path")
-    send_video_parser.add_argument("--dir", type=Path, help="Directory path")
+    send_video_parser.add_argument(
+        "--dir",
+        type=Path,
+        action="append",
+        default=[],
+        help="Directory path (repeatable)",
+    )
     send_video_parser.add_argument(
         "--zip-file",
         type=Path,
@@ -287,7 +299,13 @@ def build_parser() -> argparse.ArgumentParser:
         "send-audio", parents=[common], help="Send audio using sendAudio"
     )
     send_audio_parser.add_argument("--file", type=Path, help="Audio file path")
-    send_audio_parser.add_argument("--dir", type=Path, help="Directory path")
+    send_audio_parser.add_argument(
+        "--dir",
+        type=Path,
+        action="append",
+        default=[],
+        help="Directory path (repeatable)",
+    )
     send_audio_parser.add_argument(
         "--zip-file",
         type=Path,
@@ -622,7 +640,8 @@ async def run_command(args: argparse.Namespace) -> None:
 
     if args.command in {"send-file", "send-video", "send-audio"}:
         zip_files = args.zip_file or []
-        if not args.file and not args.dir and not zip_files:
+        dir_paths = args.dir or []
+        if not args.file and not dir_paths and not zip_files:
             raise SystemExit("Provide --file, --dir, or --zip-file")
         send_type = {
             "send-file": "file",
@@ -667,14 +686,14 @@ async def run_command(args: argparse.Namespace) -> None:
                     max_retries=args.max_retries,
                     retry_delay=args.retry_delay,
                 )
-        if args.dir:
-            if not args.dir.exists():
-                raise SystemExit(f"Directory not found: {args.dir}")
+        for dir_path in dir_paths:
+            if not dir_path.exists():
+                raise SystemExit(f"Directory not found: {dir_path}")
             await send_files_from_dir(
                 url_pool,
                 token_pool,
                 args.chat_id,
-                args.dir,
+                dir_path,
                 send_type=send_type,
                 topic_id=args.topic_id,
                 start_index=args.start_index,

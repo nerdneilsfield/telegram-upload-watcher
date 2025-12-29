@@ -13,6 +13,13 @@ The CLI SHALL accept multiple `--zip-file` values for send-file, send-video, and
 - **WHEN** a user provides more than one `--zip-file`
 - **THEN** each zip is sent in order with the same filters and retry settings
 
+### Requirement: Repeatable Directory Inputs for File Sends
+The CLI SHALL accept multiple `--dir` values for send-file, send-video, and send-audio.
+
+#### Scenario: Multiple directories
+- **WHEN** a user provides more than one `--dir`
+- **THEN** each directory is sent in order with the same filters and retry settings
+
 ### Requirement: Repeatable Watch Directories
 The CLI SHALL accept multiple `--watch-dir` values and start a watcher per directory.
 
