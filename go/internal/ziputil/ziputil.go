@@ -10,6 +10,14 @@ import (
 )
 
 func ReadFile(file *zip.File, passwords []string) ([]byte, error) {
+	return ReadFileWithOptions(file, passwords, ReadOptions{})
+}
+
+type ReadOptions struct {
+	LogPasswords bool
+}
+
+func ReadFileWithOptions(file *zip.File, passwords []string, opts ReadOptions) ([]byte, error) {
 	if file == nil {
 		return nil, errors.New("zip file is nil")
 	}
@@ -22,6 +30,7 @@ func ReadFile(file *zip.File, passwords []string) ([]byte, error) {
 
 	var lastErr error
 	var attemptErrors []string
+	var attemptPasswords []string
 	attempts := 0
 	for _, password := range passwords {
 		password = strings.TrimSpace(password)
@@ -29,6 +38,9 @@ func ReadFile(file *zip.File, passwords []string) ([]byte, error) {
 			continue
 		}
 		attempts++
+		if opts.LogPasswords {
+			attemptPasswords = append(attemptPasswords, password)
+		}
 		file.SetPassword(password)
 		data, err := readOnce(file)
 		if err == nil {
@@ -41,11 +53,15 @@ func ReadFile(file *zip.File, passwords []string) ([]byte, error) {
 		lastErr = errors.New("zip passwords exhausted")
 	}
 	if len(attemptErrors) > 0 {
-		return nil, fmt.Errorf(
+		message := fmt.Sprintf(
 			"zip password check failed after %d attempt(s): %s",
 			attempts,
 			strings.Join(attemptErrors, "; "),
 		)
+		if opts.LogPasswords && len(attemptPasswords) > 0 {
+			message = fmt.Sprintf("%s (passwords=%q)", message, attemptPasswords)
+		}
+		return nil, errors.New(message)
 	}
 	return nil, fmt.Errorf("zip password check failed after %d attempt(s): %w", attempts, lastErr)
 }

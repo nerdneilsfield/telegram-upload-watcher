@@ -40,6 +40,7 @@ func newSendFilesCmd(use string, short string, sendType string) *cobra.Command {
 	excludes := &stringSlice{}
 	zipPasses := &stringSlice{}
 	var zipPassFile string
+	var logZipPasswords bool
 
 	cmd := &cobra.Command{
 		Use:          use,
@@ -94,6 +95,7 @@ func newSendFilesCmd(use string, short string, sendType string) *cobra.Command {
 					excludes.Values(),
 					enableZip,
 					zipPasswords,
+					logZipPasswords,
 					retry,
 				)
 			}
@@ -110,6 +112,7 @@ func newSendFilesCmd(use string, short string, sendType string) *cobra.Command {
 					includes.Values(),
 					excludes.Values(),
 					zipPasswords,
+					logZipPasswords,
 					retry,
 				)
 			}
@@ -130,10 +133,11 @@ func newSendFilesCmd(use string, short string, sendType string) *cobra.Command {
 	flags.Var(excludes, "exclude", "Glob patterns to exclude (repeatable or comma-separated)")
 	flags.Var(zipPasses, "zip-pass", "Zip password (repeatable or comma-separated)")
 	flags.StringVar(&zipPassFile, "zip-pass-file", "", "Path to file with zip passwords (one per line)")
+	flags.BoolVar(&logZipPasswords, "zip-pass-log", false, "Log zip passwords while checking (use with care)")
 	return cmd
 }
 
-func sendFilesFromDir(client *telegram.Client, chatID string, topicID *int, dir string, sendType string, startIndex int, endIndex int, delay time.Duration, include []string, exclude []string, enableZip bool, zipPasswords []string, retry telegram.RetryConfig) {
+func sendFilesFromDir(client *telegram.Client, chatID string, topicID *int, dir string, sendType string, startIndex int, endIndex int, delay time.Duration, include []string, exclude []string, enableZip bool, zipPasswords []string, logZipPasswords bool, retry telegram.RetryConfig) {
 	allowed := allowedExtsForType(sendType)
 	files := collectFiles(dir, include, exclude, enableZip, allowed)
 	if len(files) == 0 {
@@ -154,7 +158,7 @@ func sendFilesFromDir(client *telegram.Client, chatID string, topicID *int, dir 
 			break
 		}
 		if strings.HasSuffix(strings.ToLower(path), ".zip") && enableZip {
-			sendFilesFromZip(client, chatID, topicID, path, sendType, 0, 0, delay, include, exclude, zipPasswords, retry)
+			sendFilesFromZip(client, chatID, topicID, path, sendType, 0, 0, delay, include, exclude, zipPasswords, logZipPasswords, retry)
 			continue
 		}
 		data, err := os.ReadFile(path)
@@ -170,7 +174,7 @@ func sendFilesFromDir(client *telegram.Client, chatID string, topicID *int, dir 
 	_ = client.SendMessage(chatID, fmt.Sprintf("Completed %s upload from %s", label, dir), topicID, retry)
 }
 
-func sendFilesFromZip(client *telegram.Client, chatID string, topicID *int, zipPath string, sendType string, startIndex int, endIndex int, delay time.Duration, include []string, exclude []string, zipPasswords []string, retry telegram.RetryConfig) {
+func sendFilesFromZip(client *telegram.Client, chatID string, topicID *int, zipPath string, sendType string, startIndex int, endIndex int, delay time.Duration, include []string, exclude []string, zipPasswords []string, logZipPasswords bool, retry telegram.RetryConfig) {
 	archive, err := zip.OpenReader(zipPath)
 	if err != nil {
 		log.Printf("invalid zip: %s", zipPath)
@@ -203,9 +207,10 @@ func sendFilesFromZip(client *telegram.Client, chatID string, topicID *int, zipP
 		return
 	}
 
+	zipOpts := ziputil.ReadOptions{LogPasswords: logZipPasswords}
 	first := filesByName[names[0]]
 	if first != nil {
-		if _, err := ziputil.ReadFile(first, zipPasswords); err != nil {
+		if _, err := ziputil.ReadFileWithOptions(first, zipPasswords, zipOpts); err != nil {
 			log.Printf(
 				"zip password check failed: %s (file=%s, encrypted=%t, flags=0x%x, method=%d, comp=%d, uncomp=%d, crc=0x%x, err=%v)",
 				zipPath,
@@ -239,7 +244,7 @@ func sendFilesFromZip(client *telegram.Client, chatID string, topicID *int, zipP
 		if file == nil {
 			continue
 		}
-		data, err := ziputil.ReadFile(file, zipPasswords)
+		data, err := ziputil.ReadFileWithOptions(file, zipPasswords, zipOpts)
 		if err != nil {
 			continue
 		}
