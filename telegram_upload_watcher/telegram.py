@@ -4,7 +4,9 @@ import json
 import logging
 import mimetypes
 import os
+import time
 import zipfile
+from datetime import datetime
 from pathlib import Path
 
 import aiohttp
@@ -62,6 +64,103 @@ async def send_message(
 def _guess_content_type(filename: str) -> str:
     mime_type, _ = mimetypes.guess_type(filename)
     return mime_type or "application/octet-stream"
+
+
+def _format_timestamp(value: datetime | None = None) -> str:
+    if value is None:
+        value = datetime.now()
+    return value.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _format_duration(seconds: float) -> str:
+    if seconds <= 0:
+        return "0s"
+    if seconds < 1:
+        return f"{int(seconds * 1000)}ms"
+    total = int(round(seconds))
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h{minutes}m{secs}s"
+    if minutes:
+        return f"{minutes}m{secs}s"
+    return f"{secs}s"
+
+
+def _format_bytes(size: int) -> str:
+    if size < 1024:
+        return f"{size} B"
+    units = ["KB", "MB", "GB", "TB", "PB"]
+    value = float(size)
+    idx = 0
+    while value >= 1024 and idx < len(units) - 1:
+        value /= 1024
+        idx += 1
+    return f"{value:.1f} {units[idx]}"
+
+
+def _format_speed(total_bytes: int, elapsed_seconds: float) -> str:
+    if total_bytes <= 0 or elapsed_seconds <= 0:
+        return "0 B/s"
+    per_second = total_bytes / elapsed_seconds
+    return f"{_format_bytes(int(per_second))}/s"
+
+
+def _print_summary(
+    kind: str,
+    source: str,
+    started_at: datetime,
+    finished_at: datetime,
+    elapsed_seconds: float,
+    sent: int,
+    skipped: int,
+    total_bytes: int,
+) -> None:
+    avg_per = elapsed_seconds / sent if sent > 0 else 0.0
+    start_value = _format_timestamp(started_at)
+    end_value = _format_timestamp(finished_at)
+    elapsed_value = _format_duration(elapsed_seconds)
+    avg_value = _format_duration(avg_per)
+    total_value = _format_bytes(total_bytes)
+    speed_value = _format_speed(total_bytes, elapsed_seconds)
+
+    try:
+        from rich import box
+        from rich.console import Console
+        from rich.table import Table
+    except Exception:
+        print(
+            "Summary %s from %s: start=%s end=%s elapsed=%s avg=%s total=%s speed=%s sent=%d skipped=%d"
+            % (
+                kind,
+                source,
+                start_value,
+                end_value,
+                elapsed_value,
+                avg_value,
+                total_value,
+                speed_value,
+                sent,
+                skipped,
+            )
+        )
+        return
+
+    table = Table(title="Summary", box=box.ASCII)
+    table.add_column("Metric", style="bold")
+    table.add_column("Value")
+    table.add_row("Kind", kind)
+    table.add_row("Source", source)
+    table.add_row("Start", start_value)
+    table.add_row("End", end_value)
+    table.add_row("Elapsed", elapsed_value)
+    table.add_row("Avg per item", avg_value)
+    table.add_row("Total", total_value)
+    table.add_row("Avg speed", speed_value)
+    table.add_row("Sent", str(sent))
+    table.add_row("Skipped", str(skipped))
+
+    Console().print(table)
 
 
 async def _send_message_once(
@@ -453,11 +552,16 @@ async def send_images_from_dir(
         logging.info("No images found in %s", image_dir)
         return
 
+    started_at = datetime.now()
+    started_clock = time.monotonic()
+    sent = 0
+    skipped = 0
+    sent_bytes = 0
     await send_message(
         url_pool,
         token_pool,
         chat_id,
-        f"Starting image upload: {len(files)} file(s)",
+        f"Starting image upload: {len(files)} file(s) at {_format_timestamp(started_at)}",
         topic_id=topic_id,
         max_retries=max_retries,
         retry_delay=retry_delay,
@@ -466,6 +570,7 @@ async def send_images_from_dir(
     min_index = start_index * group_size
     max_index = end_index * group_size if end_index else None
     media_files: list[tuple[str, bytes]] = []
+    batch_bytes = 0
     iterator = tqdm.tqdm(files) if progress else files
     for idx, path in enumerate(iterator):
         if idx < min_index:
@@ -492,8 +597,15 @@ async def send_images_from_dir(
                 retry_delay=retry_delay,
             )
             continue
-        with path.open("rb") as image_file:
-            media_files.append((path.name, image_file.read()))
+        try:
+            with path.open("rb") as image_file:
+                data = image_file.read()
+        except OSError as exc:
+            logging.warning("Failed to read %s: %s", path, exc)
+            skipped += 1
+            continue
+        media_files.append((path.name, data))
+        batch_bytes += len(data)
         if len(media_files) >= group_size:
             await send_media_group(
                 url_pool,
@@ -504,7 +616,10 @@ async def send_images_from_dir(
                 max_retries=max_retries,
                 retry_delay=retry_delay,
             )
+            sent += len(media_files)
+            sent_bytes += batch_bytes
             media_files = []
+            batch_bytes = 0
             await asyncio.sleep(batch_delay)
 
     if media_files:
@@ -517,15 +632,40 @@ async def send_images_from_dir(
             max_retries=max_retries,
             retry_delay=retry_delay,
         )
+        sent += len(media_files)
+        sent_bytes += batch_bytes
 
+    finished_at = datetime.now()
+    elapsed_seconds = time.monotonic() - started_clock
+    avg_seconds = elapsed_seconds / sent if sent > 0 else 0.0
     await send_message(
         url_pool,
         token_pool,
         chat_id,
-        f"Completed image upload from {image_dir}",
+        "Completed image upload from %s at %s (elapsed %s, avg/image %s, total %s, avg %s, sent %d, skipped %d)"
+        % (
+            image_dir,
+            _format_timestamp(finished_at),
+            _format_duration(elapsed_seconds),
+            _format_duration(avg_seconds),
+            _format_bytes(sent_bytes),
+            _format_speed(sent_bytes, elapsed_seconds),
+            sent,
+            skipped,
+        ),
         topic_id=topic_id,
         max_retries=max_retries,
         retry_delay=retry_delay,
+    )
+    _print_summary(
+        "image",
+        str(image_dir),
+        started_at,
+        finished_at,
+        elapsed_seconds,
+        sent,
+        skipped,
+        sent_bytes,
     )
 
 
@@ -560,11 +700,16 @@ async def send_files_from_dir(
         return
 
     label = _send_type_label(send_type)
+    started_at = datetime.now()
+    started_clock = time.monotonic()
+    sent = 0
+    skipped = 0
+    sent_bytes = 0
     await send_message(
         url_pool,
         token_pool,
         chat_id,
-        f"Starting {label} upload: {len(files)} file(s)",
+        f"Starting {label} upload: {len(files)} file(s) at {_format_timestamp(started_at)}",
         topic_id=topic_id,
         max_retries=max_retries,
         retry_delay=retry_delay,
@@ -597,27 +742,60 @@ async def send_files_from_dir(
                 retry_delay=retry_delay,
             )
             continue
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            logging.warning("Failed to read %s: %s", path, exc)
+            skipped += 1
+            continue
         await _send_single_file(
             url_pool,
             token_pool,
             chat_id,
             send_type,
             path.name,
-            path.read_bytes(),
+            data,
             topic_id=topic_id,
             max_retries=max_retries,
             retry_delay=retry_delay,
         )
+        sent += 1
+        sent_bytes += len(data)
         await asyncio.sleep(batch_delay)
 
+    finished_at = datetime.now()
+    elapsed_seconds = time.monotonic() - started_clock
+    avg_seconds = elapsed_seconds / sent if sent > 0 else 0.0
     await send_message(
         url_pool,
         token_pool,
         chat_id,
-        f"Completed {label} upload from {root_dir}",
+        "Completed %s upload from %s at %s (elapsed %s, avg/%s %s, total %s, avg %s, sent %d, skipped %d)"
+        % (
+            label,
+            root_dir,
+            _format_timestamp(finished_at),
+            _format_duration(elapsed_seconds),
+            label,
+            _format_duration(avg_seconds),
+            _format_bytes(sent_bytes),
+            _format_speed(sent_bytes, elapsed_seconds),
+            sent,
+            skipped,
+        ),
         topic_id=topic_id,
         max_retries=max_retries,
         retry_delay=retry_delay,
+    )
+    _print_summary(
+        label,
+        str(root_dir),
+        started_at,
+        finished_at,
+        elapsed_seconds,
+        sent,
+        skipped,
+        sent_bytes,
     )
 
 
@@ -673,11 +851,16 @@ async def send_files_from_zip(
             return
 
         label = _send_type_label(send_type)
+        started_at = datetime.now()
+        started_clock = time.monotonic()
+        sent = 0
+        skipped = 0
+        sent_bytes = 0
         await send_message(
             url_pool,
             token_pool,
             chat_id,
-            f"Starting {label} upload: {len(names)} file(s)",
+            f"Starting {label} upload: {len(names)} file(s) at {_format_timestamp(started_at)}",
             topic_id=topic_id,
             max_retries=max_retries,
             retry_delay=retry_delay,
@@ -691,28 +874,61 @@ async def send_files_from_zip(
                 continue
             if max_index is not None and idx >= max_index:
                 break
-            with zip_ref.open(name) as handle:
-                await _send_single_file(
-                    url_pool,
-                    token_pool,
-                    chat_id,
-                    send_type,
-                    Path(name).name,
-                    handle.read(),
-                    topic_id=topic_id,
-                    max_retries=max_retries,
-                    retry_delay=retry_delay,
-                )
+            try:
+                with zip_ref.open(name) as handle:
+                    data = handle.read()
+            except OSError as exc:
+                logging.warning("Failed to read %s from %s: %s", name, zip_file, exc)
+                skipped += 1
+                continue
+            await _send_single_file(
+                url_pool,
+                token_pool,
+                chat_id,
+                send_type,
+                Path(name).name,
+                data,
+                topic_id=topic_id,
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+            )
+            sent += 1
+            sent_bytes += len(data)
             await asyncio.sleep(batch_delay)
 
+    finished_at = datetime.now()
+    elapsed_seconds = time.monotonic() - started_clock
+    avg_seconds = elapsed_seconds / sent if sent > 0 else 0.0
     await send_message(
         url_pool,
         token_pool,
         chat_id,
-        f"Completed {label} upload from {zip_file.name}",
+        "Completed %s upload from %s at %s (elapsed %s, avg/%s %s, total %s, avg %s, sent %d, skipped %d)"
+        % (
+            label,
+            zip_file.name,
+            _format_timestamp(finished_at),
+            _format_duration(elapsed_seconds),
+            label,
+            _format_duration(avg_seconds),
+            _format_bytes(sent_bytes),
+            _format_speed(sent_bytes, elapsed_seconds),
+            sent,
+            skipped,
+        ),
         topic_id=topic_id,
         max_retries=max_retries,
         retry_delay=retry_delay,
+    )
+    _print_summary(
+        label,
+        zip_file.name,
+        started_at,
+        finished_at,
+        elapsed_seconds,
+        sent,
+        skipped,
+        sent_bytes,
     )
 
 

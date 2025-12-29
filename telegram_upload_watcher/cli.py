@@ -83,8 +83,20 @@ def build_parser() -> argparse.ArgumentParser:
     send_images_parser = subparsers.add_parser(
         "send-images", parents=[common], help="Send images from a directory or zip"
     )
-    send_images_parser.add_argument("--image-dir", type=Path, help="Image directory")
-    send_images_parser.add_argument("--zip-file", type=Path, help="Zip file path")
+    send_images_parser.add_argument(
+        "--image-dir",
+        type=Path,
+        action="append",
+        default=[],
+        help="Image directory (repeatable)",
+    )
+    send_images_parser.add_argument(
+        "--zip-file",
+        type=Path,
+        action="append",
+        default=[],
+        help="Zip file path (repeatable)",
+    )
     send_images_parser.add_argument(
         "--group-size",
         type=int,
@@ -148,7 +160,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     send_file_parser.add_argument("--file", type=Path, help="File path")
     send_file_parser.add_argument("--dir", type=Path, help="Directory path")
-    send_file_parser.add_argument("--zip-file", type=Path, help="Zip file path")
+    send_file_parser.add_argument(
+        "--zip-file",
+        type=Path,
+        action="append",
+        default=[],
+        help="Zip file path (repeatable)",
+    )
     send_file_parser.add_argument(
         "--start-index",
         type=int,
@@ -206,7 +224,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     send_video_parser.add_argument("--file", type=Path, help="Video file path")
     send_video_parser.add_argument("--dir", type=Path, help="Directory path")
-    send_video_parser.add_argument("--zip-file", type=Path, help="Zip file path")
+    send_video_parser.add_argument(
+        "--zip-file",
+        type=Path,
+        action="append",
+        default=[],
+        help="Zip file path (repeatable)",
+    )
     send_video_parser.add_argument(
         "--start-index",
         type=int,
@@ -264,7 +288,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     send_audio_parser.add_argument("--file", type=Path, help="Audio file path")
     send_audio_parser.add_argument("--dir", type=Path, help="Directory path")
-    send_audio_parser.add_argument("--zip-file", type=Path, help="Zip file path")
+    send_audio_parser.add_argument(
+        "--zip-file",
+        type=Path,
+        action="append",
+        default=[],
+        help="Zip file path (repeatable)",
+    )
     send_audio_parser.add_argument(
         "--start-index",
         type=int,
@@ -321,7 +351,12 @@ def build_parser() -> argparse.ArgumentParser:
         "watch", parents=[common], help="Watch folder and send queued images"
     )
     watch_parser.add_argument(
-        "--watch-dir", type=Path, required=True, help="Folder to watch"
+        "--watch-dir",
+        type=Path,
+        action="append",
+        default=[],
+        required=True,
+        help="Folder to watch (repeatable)",
     )
     watch_parser.add_argument(
         "--queue-file",
@@ -538,16 +573,18 @@ async def run_command(args: argparse.Namespace) -> None:
         return
 
     if args.command == "send-images":
-        if not args.image_dir and not args.zip_file:
+        image_dirs = args.image_dir or []
+        zip_files = args.zip_file or []
+        if not image_dirs and not zip_files:
             raise SystemExit("Provide --image-dir or --zip-file")
-        if args.image_dir:
-            if not args.image_dir.exists():
-                raise SystemExit(f"Image directory not found: {args.image_dir}")
+        for image_dir in image_dirs:
+            if not image_dir.exists():
+                raise SystemExit(f"Image directory not found: {image_dir}")
             await send_images_from_dir(
                 url_pool,
                 token_pool,
                 args.chat_id,
-                args.image_dir,
+                image_dir,
                 topic_id=args.topic_id,
                 group_size=args.group_size,
                 start_index=args.start_index,
@@ -561,14 +598,14 @@ async def run_command(args: argparse.Namespace) -> None:
                 max_retries=args.max_retries,
                 retry_delay=args.retry_delay,
             )
-        if args.zip_file:
-            if not args.zip_file.exists():
-                raise SystemExit(f"Zip file not found: {args.zip_file}")
+        for zip_file in zip_files:
+            if not zip_file.exists():
+                raise SystemExit(f"Zip file not found: {zip_file}")
             await send_images_from_zip(
                 url_pool,
                 token_pool,
                 args.chat_id,
-                args.zip_file,
+                zip_file,
                 topic_id=args.topic_id,
                 group_size=args.group_size,
                 start_index=args.start_index,
@@ -584,7 +621,8 @@ async def run_command(args: argparse.Namespace) -> None:
         return
 
     if args.command in {"send-file", "send-video", "send-audio"}:
-        if not args.file and not args.dir and not args.zip_file:
+        zip_files = args.zip_file or []
+        if not args.file and not args.dir and not zip_files:
             raise SystemExit("Provide --file, --dir, or --zip-file")
         send_type = {
             "send-file": "file",
@@ -650,14 +688,14 @@ async def run_command(args: argparse.Namespace) -> None:
                 max_retries=args.max_retries,
                 retry_delay=args.retry_delay,
             )
-        if args.zip_file:
-            if not args.zip_file.exists():
-                raise SystemExit(f"Zip file not found: {args.zip_file}")
+        for zip_file in zip_files:
+            if not zip_file.exists():
+                raise SystemExit(f"Zip file not found: {zip_file}")
             await send_files_from_zip(
                 url_pool,
                 token_pool,
                 args.chat_id,
-                args.zip_file,
+                zip_file,
                 send_type=send_type,
                 topic_id=args.topic_id,
                 start_index=args.start_index,
@@ -673,8 +711,12 @@ async def run_command(args: argparse.Namespace) -> None:
         return
 
     if args.command == "watch":
-        if not args.watch_dir.exists():
-            raise SystemExit(f"Watch directory not found: {args.watch_dir}")
+        watch_dirs = args.watch_dir or []
+        if not watch_dirs:
+            raise SystemExit("Provide --watch-dir")
+        for watch_dir in watch_dirs:
+            if not watch_dir.exists():
+                raise SystemExit(f"Watch directory not found: {watch_dir}")
 
         with_image = args.with_image
         with_video = args.with_video
@@ -688,12 +730,18 @@ async def run_command(args: argparse.Namespace) -> None:
             with_image = True
         include_globs = _normalize_includes(args.include)
         exclude_globs = _normalize_excludes(args.exclude)
+        resolved_watch_dirs = [watch_dir.resolve() for watch_dir in watch_dirs]
+        watch_dir_meta = (
+            str(resolved_watch_dirs[0])
+            if len(resolved_watch_dirs) == 1
+            else [str(path) for path in resolved_watch_dirs]
+        )
         meta = {
             "type": QUEUE_META_TYPE,
             "version": QUEUE_META_VERSION,
             "params": {
                 "command": "watch",
-                "watch_dir": str(args.watch_dir.resolve()),
+                "watch_dir": watch_dir_meta,
                 "recursive": args.recursive,
                 "chat_id": args.chat_id,
                 "topic_id": args.topic_id,
@@ -709,18 +757,21 @@ async def run_command(args: argparse.Namespace) -> None:
             queue = JsonlQueue(args.queue_file, meta=meta)
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
-        watch_config = WatchConfig(
-            root=args.watch_dir,
-            recursive=args.recursive,
-            exclude_globs=exclude_globs,
-            include_globs=include_globs,
-            with_image=with_image,
-            with_video=with_video,
-            with_audio=with_audio,
-            with_all=with_all,
-            scan_interval=args.scan_interval,
-            settle_seconds=args.settle_seconds,
-        )
+        watch_configs = [
+            WatchConfig(
+                root=watch_dir,
+                recursive=args.recursive,
+                exclude_globs=exclude_globs,
+                include_globs=include_globs,
+                with_image=with_image,
+                with_video=with_video,
+                with_audio=with_audio,
+                with_all=with_all,
+                scan_interval=args.scan_interval,
+                settle_seconds=args.settle_seconds,
+            )
+            for watch_dir in resolved_watch_dirs
+        ]
         sender_config = SenderConfig(
             chat_id=args.chat_id,
             topic_id=args.topic_id,
@@ -739,8 +790,8 @@ async def run_command(args: argparse.Namespace) -> None:
             notify_on_idle=True,
         )
 
-        tasks = [
-            watch_loop(watch_config, queue),
+        tasks = [watch_loop(config, queue) for config in watch_configs]
+        tasks.append(
             sender_loop(
                 sender_config,
                 queue,
@@ -749,8 +800,8 @@ async def run_command(args: argparse.Namespace) -> None:
                 zip_passwords=_load_zip_passwords(
                     args.zip_pass, args.zip_pass_file
                 ),
-            ),
-        ]
+            )
+        )
         if notify_config.enabled:
             tasks.append(
                 notify_loop(
