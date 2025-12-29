@@ -58,11 +58,30 @@ $CLI send-images \
   --config ./config.example.ini
 ```
 
+Send multiple image sources / 发送多个图片来源:
+```bash
+$CLI send-images \
+  --chat-id "-1001234567890" \
+  --image-dir /path/to/images1 \
+  --image-dir /path/to/images2 \
+  --zip-file /path/to/images.zip \
+  --config ./config.example.ini
+```
+
 Send a file / 发送文件:
 ```bash
 $CLI send-file \
   --chat-id "-1001234567890" \
   --file /path/to/report.pdf \
+  --config ./config.example.ini
+```
+
+Send multiple files / 发送多个文件:
+```bash
+$CLI send-file \
+  --chat-id "-1001234567890" \
+  --file /path/to/report1.pdf \
+  --file /path/to/report2.pdf \
   --config ./config.example.ini
 ```
 
@@ -126,6 +145,16 @@ $CLI watch \
   --notify
 ```
 
+Watch multiple folders / 监控多个文件夹:
+```bash
+$CLI watch \
+  --watch-dir /path/to/watch1 \
+  --watch-dir /path/to/watch2 \
+  --chat-id "-1001234567890" \
+  --config ./config.example.ini \
+  --with-image
+```
+
 ## Workflow / 工作流程
 The watch mode scans folders, pushes files into a queue, then sends in batches.
 watch 模式会扫描目录 -> 入队 -> 批量发送。
@@ -163,6 +192,11 @@ $CLI send-images \
 ```
 
 Useful options / 常用参数:
+- `--image-dir` image directory (repeatable) / 图片目录 (可重复)
+- `--zip-file` zip file (repeatable) / zip 文件 (可重复)
+- `--file` file path (repeatable) / 文件路径 (可重复)
+- `--dir` directory path (repeatable) / 目录路径 (可重复)
+- `--watch-dir` watch folder (repeatable) / 监控目录 (可重复)
 - `--recursive` enable recursive scan / 递归扫描
 - `--include "*.jpg"` glob includes (repeatable) / 包含规则 (可重复)
 - `--exclude "*.tmp"` glob excludes (repeatable) / 排除规则 (可重复)
