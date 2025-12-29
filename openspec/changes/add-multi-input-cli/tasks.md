@@ -5,3 +5,4 @@
 - [x] 1.4 Update Go queue metadata to record multiple watch directories
 - [x] 1.5 Adjust CLI help text where needed to reflect repeatable inputs
 - [x] 1.6 Update Go send-file/video/audio to accept repeatable `--dir`
+- [x] 1.7 Update Go and Python send-file/video/audio to accept repeatable `--file`

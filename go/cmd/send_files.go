@@ -29,7 +29,7 @@ func newSendAudioCmd() *cobra.Command {
 
 func newSendFilesCmd(use string, short string, sendType string) *cobra.Command {
 	cfg := &commonFlags{}
-	var filePath string
+	filePaths := &stringSlice{}
 	dirPaths := &stringSlice{}
 	zipPaths := &stringSlice{}
 	var startIndex int
@@ -52,7 +52,7 @@ func newSendFilesCmd(use string, short string, sendType string) *cobra.Command {
 			if cfg.chatID == "" {
 				return fmt.Errorf("chat-id is required")
 			}
-			if filePath == "" && len(dirPaths.Values()) == 0 && len(zipPaths.Values()) == 0 {
+			if len(filePaths.Values()) == 0 && len(dirPaths.Values()) == 0 && len(zipPaths.Values()) == 0 {
 				return fmt.Errorf("file, dir, or zip-file is required")
 			}
 
@@ -71,7 +71,7 @@ func newSendFilesCmd(use string, short string, sendType string) *cobra.Command {
 			}
 
 			retry := telegram.RetryConfig{MaxRetries: cfg.maxRetries, Delay: cfg.retryDelay}
-			if filePath != "" {
+			for _, filePath := range filePaths.Values() {
 				label := sendTypeLabel(sendType)
 				progressState := newProgressTracker(1, label)
 				startedAt := time.Now()
@@ -156,7 +156,7 @@ func newSendFilesCmd(use string, short string, sendType string) *cobra.Command {
 
 	bindCommonFlags(cmd, cfg)
 	flags := cmd.Flags()
-	flags.StringVar(&filePath, "file", "", "File path")
+	flags.Var(filePaths, "file", "File path (repeatable or comma-separated)")
 	flags.Var(dirPaths, "dir", "Directory path (repeatable or comma-separated)")
 	flags.Var(zipPaths, "zip-file", "Zip file path (repeatable or comma-separated)")
 	flags.IntVar(&startIndex, "start-index", 0, "Start index (0-based)")

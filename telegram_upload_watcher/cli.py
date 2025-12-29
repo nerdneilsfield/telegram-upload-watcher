@@ -158,7 +158,13 @@ def build_parser() -> argparse.ArgumentParser:
     send_file_parser = subparsers.add_parser(
         "send-file", parents=[common], help="Send files using sendDocument"
     )
-    send_file_parser.add_argument("--file", type=Path, help="File path")
+    send_file_parser.add_argument(
+        "--file",
+        type=Path,
+        action="append",
+        default=[],
+        help="File path (repeatable)",
+    )
     send_file_parser.add_argument(
         "--dir",
         type=Path,
@@ -228,7 +234,13 @@ def build_parser() -> argparse.ArgumentParser:
     send_video_parser = subparsers.add_parser(
         "send-video", parents=[common], help="Send videos using sendVideo"
     )
-    send_video_parser.add_argument("--file", type=Path, help="Video file path")
+    send_video_parser.add_argument(
+        "--file",
+        type=Path,
+        action="append",
+        default=[],
+        help="Video file path (repeatable)",
+    )
     send_video_parser.add_argument(
         "--dir",
         type=Path,
@@ -298,7 +310,13 @@ def build_parser() -> argparse.ArgumentParser:
     send_audio_parser = subparsers.add_parser(
         "send-audio", parents=[common], help="Send audio using sendAudio"
     )
-    send_audio_parser.add_argument("--file", type=Path, help="Audio file path")
+    send_audio_parser.add_argument(
+        "--file",
+        type=Path,
+        action="append",
+        default=[],
+        help="Audio file path (repeatable)",
+    )
     send_audio_parser.add_argument(
         "--dir",
         type=Path,
@@ -639,9 +657,10 @@ async def run_command(args: argparse.Namespace) -> None:
         return
 
     if args.command in {"send-file", "send-video", "send-audio"}:
+        file_paths = args.file or []
         zip_files = args.zip_file or []
         dir_paths = args.dir or []
-        if not args.file and not dir_paths and not zip_files:
+        if not file_paths and not dir_paths and not zip_files:
             raise SystemExit("Provide --file, --dir, or --zip-file")
         send_type = {
             "send-file": "file",
@@ -649,16 +668,16 @@ async def run_command(args: argparse.Namespace) -> None:
             "send-audio": "audio",
         }[args.command]
         zip_passwords = _load_zip_passwords(args.zip_pass, args.zip_pass_file)
-        if args.file:
-            if not args.file.exists():
-                raise SystemExit(f"File not found: {args.file}")
-            data = args.file.read_bytes()
+        for file_path in file_paths:
+            if not file_path.exists():
+                raise SystemExit(f"File not found: {file_path}")
+            data = file_path.read_bytes()
             if send_type == "file":
                 await send_document(
                     url_pool,
                     token_pool,
                     args.chat_id,
-                    args.file.name,
+                    file_path.name,
                     data,
                     topic_id=args.topic_id,
                     max_retries=args.max_retries,
@@ -669,7 +688,7 @@ async def run_command(args: argparse.Namespace) -> None:
                     url_pool,
                     token_pool,
                     args.chat_id,
-                    args.file.name,
+                    file_path.name,
                     data,
                     topic_id=args.topic_id,
                     max_retries=args.max_retries,
@@ -680,7 +699,7 @@ async def run_command(args: argparse.Namespace) -> None:
                     url_pool,
                     token_pool,
                     args.chat_id,
-                    args.file.name,
+                    file_path.name,
                     data,
                     topic_id=args.topic_id,
                     max_retries=args.max_retries,

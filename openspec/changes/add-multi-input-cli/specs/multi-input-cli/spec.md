@@ -20,6 +20,13 @@ The CLI SHALL accept multiple `--dir` values for send-file, send-video, and send
 - **WHEN** a user provides more than one `--dir`
 - **THEN** each directory is sent in order with the same filters and retry settings
 
+### Requirement: Repeatable File Inputs for File Sends
+The CLI SHALL accept multiple `--file` values for send-file, send-video, and send-audio.
+
+#### Scenario: Multiple files
+- **WHEN** a user provides more than one `--file`
+- **THEN** each file is sent in order with the same retry settings
+
 ### Requirement: Repeatable Watch Directories
 The CLI SHALL accept multiple `--watch-dir` values and start a watcher per directory.
 
