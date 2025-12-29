@@ -10,20 +10,24 @@ import (
 )
 
 func ReadFile(file *zip.File, passwords []string) ([]byte, error) {
-	data, err := readOnce(file)
-	if err == nil {
-		return data, nil
+	if file == nil {
+		return nil, errors.New("zip file is nil")
+	}
+	if !file.IsEncrypted() {
+		return readOnce(file)
 	}
 	if len(passwords) == 0 {
-		return nil, err
+		return nil, errors.New("zip entry is encrypted but no passwords provided")
 	}
 
-	lastErr := err
+	var lastErr error
+	attempts := 0
 	for _, password := range passwords {
 		password = strings.TrimSpace(password)
 		if password == "" {
 			continue
 		}
+		attempts++
 		file.SetPassword(password)
 		data, err := readOnce(file)
 		if err == nil {
@@ -34,7 +38,7 @@ func ReadFile(file *zip.File, passwords []string) ([]byte, error) {
 	if lastErr == nil {
 		lastErr = errors.New("zip passwords exhausted")
 	}
-	return nil, lastErr
+	return nil, fmt.Errorf("zip password check failed after %d attempt(s): %w", attempts, lastErr)
 }
 
 func readOnce(file *zip.File) (data []byte, err error) {

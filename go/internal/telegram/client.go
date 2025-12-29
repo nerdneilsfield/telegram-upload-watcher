@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/valyala/fasthttp"
@@ -46,10 +47,23 @@ func NewClient(urlPool *URLPool, tokenPool *TokenPool) *Client {
 }
 
 func getProxyFromEnv() string {
-	if proxy := os.Getenv("https_proxy"); proxy != "" {
-		return proxy
+	proxy := os.Getenv("https_proxy")
+	if proxy == "" {
+		proxy = os.Getenv("HTTPS_PROXY")
 	}
-	return os.Getenv("HTTPS_PROXY")
+	if proxy == "" {
+		return ""
+	}
+	if strings.Contains(proxy, "://") {
+		parsed, err := url.Parse(proxy)
+		if err == nil && parsed.Host != "" {
+			if parsed.User != nil {
+				return parsed.User.String() + "@" + parsed.Host
+			}
+			return parsed.Host
+		}
+	}
+	return proxy
 }
 
 func (c *Client) TestToken(apiURL string, token string) bool {

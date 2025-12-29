@@ -305,7 +305,7 @@ func collectImageItemsFromZip(zipPath string, include []string, exclude []string
 	}
 	if first != nil {
 		if _, err := ziputil.ReadFile(first, zipPasswords); err != nil {
-			return nil, fmt.Errorf("zip passwords failed: %s", filepath.Base(zipPath))
+			return nil, fmt.Errorf("zip password check failed (%s): %w", filepath.Base(zipPath), err)
 		}
 	}
 	return items, nil
@@ -380,7 +380,7 @@ func collectFileItemsFromZip(zipPath string, sendType string, include []string, 
 	}
 	if first != nil {
 		if _, err := ziputil.ReadFile(first, zipPasswords); err != nil {
-			return nil, fmt.Errorf("zip passwords failed: %s", filepath.Base(zipPath))
+			return nil, fmt.Errorf("zip password check failed (%s): %w", filepath.Base(zipPath), err)
 		}
 	}
 	return items, nil
