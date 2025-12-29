@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/gui"
+	imageutil "github.com/nerdneilsfield/telegram-upload-watcher/go/internal/image"
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/runcontrol"
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/sender"
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/telegram"
@@ -127,7 +128,12 @@ func sendImages(
 				log.Printf("failed to load image: %v", err)
 				continue
 			}
-			media = append(media, telegram.MediaFile{Filename: filename, Data: data})
+			prepared, err := prepareImageMedia(data, filename, settings.Settings.MaxDimension, settings.Settings.MaxBytes, settings.Settings.PNGStartLevel)
+			if err != nil {
+				log.Printf("invalid image %s: %v", filename, err)
+				continue
+			}
+			media = append(media, prepared)
 		}
 		if len(media) == 0 {
 			continue
@@ -545,4 +551,22 @@ func isImage(name string) bool {
 		}
 	}
 	return false
+}
+
+func prepareImageMedia(data []byte, filename string, maxDimension int, maxBytes int, pngStartLevel int) (telegram.MediaFile, error) {
+	if maxDimension <= 0 && maxBytes <= 0 {
+		return telegram.MediaFile{Filename: filename, Data: data}, nil
+	}
+	if maxBytes <= 0 {
+		maxBytes = maxInt()
+	}
+	result, err := imageutil.Prepare(data, filename, maxDimension, maxBytes, pngStartLevel)
+	if err != nil {
+		return telegram.MediaFile{}, err
+	}
+	return telegram.MediaFile{Filename: result.Filename, Data: result.Data}, nil
+}
+
+func maxInt() int {
+	return int(^uint(0) >> 1)
 }

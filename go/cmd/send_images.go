@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	imageutil "github.com/nerdneilsfield/telegram-upload-watcher/go/internal/image"
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/telegram"
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/ziputil"
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/pkgs/constants"
@@ -30,6 +31,9 @@ func newSendImagesCmd() *cobra.Command {
 	zipPasses := &stringSlice{}
 	var zipPassFile string
 	var logZipPasswords bool
+	var maxDimension int
+	var maxBytes int
+	var pngStartLevel int
 
 	cmd := &cobra.Command{
 		Use:          "send-images",
@@ -75,6 +79,9 @@ func newSendImagesCmd() *cobra.Command {
 					enableZip,
 					zipPasswords,
 					logZipPasswords,
+					maxDimension,
+					maxBytes,
+					pngStartLevel,
 					retry,
 				)
 			}
@@ -92,6 +99,9 @@ func newSendImagesCmd() *cobra.Command {
 					excludes.Values(),
 					zipPasswords,
 					logZipPasswords,
+					maxDimension,
+					maxBytes,
+					pngStartLevel,
 					retry,
 				)
 			}
@@ -113,10 +123,13 @@ func newSendImagesCmd() *cobra.Command {
 	flags.Var(zipPasses, "zip-pass", "Zip password (repeatable or comma-separated)")
 	flags.StringVar(&zipPassFile, "zip-pass-file", "", "Path to file with zip passwords (one per line)")
 	flags.BoolVar(&logZipPasswords, "zip-pass-log", false, "Log zip passwords while checking (use with care)")
+	flags.IntVar(&maxDimension, "max-dimension", 2000, "Max image dimension (0 to disable resize)")
+	flags.IntVar(&maxBytes, "max-bytes", 5*1024*1024, "Max image size in bytes (0 to disable size limit)")
+	flags.IntVar(&pngStartLevel, "png-start-level", 8, "PNG compression start level (0-9)")
 	return cmd
 }
 
-func sendImagesFromDir(client *telegram.Client, chatID string, topicID *int, dir string, groupSize int, startIndex int, endIndex int, delay time.Duration, include []string, exclude []string, enableZip bool, zipPasswords []string, logZipPasswords bool, retry telegram.RetryConfig) {
+func sendImagesFromDir(client *telegram.Client, chatID string, topicID *int, dir string, groupSize int, startIndex int, endIndex int, delay time.Duration, include []string, exclude []string, enableZip bool, zipPasswords []string, logZipPasswords bool, maxDimension int, maxBytes int, pngStartLevel int, retry telegram.RetryConfig) {
 	files := []string{}
 	filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -161,14 +174,19 @@ func sendImagesFromDir(client *telegram.Client, chatID string, topicID *int, dir
 			break
 		}
 		if strings.HasSuffix(strings.ToLower(path), ".zip") {
-			sendImagesFromZip(client, chatID, topicID, path, groupSize, 0, 0, delay, include, exclude, zipPasswords, logZipPasswords, retry)
+			sendImagesFromZip(client, chatID, topicID, path, groupSize, 0, 0, delay, include, exclude, zipPasswords, logZipPasswords, maxDimension, maxBytes, pngStartLevel, retry)
 			continue
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
 		}
-		media = append(media, telegram.MediaFile{Filename: filepath.Base(path), Data: data})
+		prepared, err := prepareImageMedia(data, filepath.Base(path), maxDimension, maxBytes, pngStartLevel)
+		if err != nil {
+			log.Printf("invalid image %s: %v", filepath.Base(path), err)
+			continue
+		}
+		media = append(media, prepared)
 		if len(media) >= groupSize {
 			if err := client.SendMediaGroup(chatID, media, topicID, retry); err != nil {
 				log.Printf("send media group failed: %v", err)
@@ -187,7 +205,7 @@ func sendImagesFromDir(client *telegram.Client, chatID string, topicID *int, dir
 	_ = client.SendMessage(chatID, fmt.Sprintf("Completed image upload from %s", dir), topicID, retry)
 }
 
-func sendImagesFromZip(client *telegram.Client, chatID string, topicID *int, zipPath string, groupSize int, startIndex int, endIndex int, delay time.Duration, include []string, exclude []string, zipPasswords []string, logZipPasswords bool, retry telegram.RetryConfig) {
+func sendImagesFromZip(client *telegram.Client, chatID string, topicID *int, zipPath string, groupSize int, startIndex int, endIndex int, delay time.Duration, include []string, exclude []string, zipPasswords []string, logZipPasswords bool, maxDimension int, maxBytes int, pngStartLevel int, retry telegram.RetryConfig) {
 	archive, err := zip.OpenReader(zipPath)
 	if err != nil {
 		log.Printf("invalid zip: %s", zipPath)
@@ -260,7 +278,12 @@ func sendImagesFromZip(client *telegram.Client, chatID string, topicID *int, zip
 		if err != nil {
 			continue
 		}
-		media = append(media, telegram.MediaFile{Filename: filepath.Base(name), Data: data})
+		prepared, err := prepareImageMedia(data, filepath.Base(name), maxDimension, maxBytes, pngStartLevel)
+		if err != nil {
+			log.Printf("invalid image %s: %v", filepath.Base(name), err)
+			continue
+		}
+		media = append(media, prepared)
 		if len(media) >= groupSize {
 			if err := client.SendMediaGroup(chatID, media, topicID, retry); err != nil {
 				log.Printf("send media group failed: %v", err)
@@ -318,4 +341,22 @@ func isImage(name string) bool {
 		}
 	}
 	return false
+}
+
+func prepareImageMedia(data []byte, filename string, maxDimension int, maxBytes int, pngStartLevel int) (telegram.MediaFile, error) {
+	if maxDimension <= 0 && maxBytes <= 0 {
+		return telegram.MediaFile{Filename: filename, Data: data}, nil
+	}
+	if maxBytes <= 0 {
+		maxBytes = maxInt()
+	}
+	result, err := imageutil.Prepare(data, filename, maxDimension, maxBytes, pngStartLevel)
+	if err != nil {
+		return telegram.MediaFile{}, err
+	}
+	return telegram.MediaFile{Filename: result.Filename, Data: result.Data}, nil
+}
+
+func maxInt() int {
+	return int(^uint(0) >> 1)
 }
