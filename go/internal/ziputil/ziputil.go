@@ -2,6 +2,7 @@ package ziputil
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 
@@ -36,7 +37,15 @@ func ReadFile(file *zip.File, passwords []string) ([]byte, error) {
 	return nil, lastErr
 }
 
-func readOnce(file *zip.File) ([]byte, error) {
+func readOnce(file *zip.File) (data []byte, err error) {
+	if file == nil {
+		return nil, errors.New("zip file is nil")
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("zip open panic: %v", r)
+		}
+	}()
 	handle, err := file.Open()
 	if err != nil {
 		return nil, err
