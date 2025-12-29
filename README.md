@@ -152,6 +152,8 @@ $CLI watch \
   --with-video \
   --notify
 ```
+Note: watch automatically expands zip contents; use `--with-image --with-video` to send both types.
+注意：watch 会自动展开 zip 内容；同时开启 `--with-image --with-video` 即可发送图片和视频。
 
 Watch multiple folders / 监控多个文件夹:
 ```bash
@@ -196,6 +198,14 @@ $CLI send-images \
   --zip-file /path/to/images.zip \
   --include "*.png" \
   --exclude "*_thumb.*" \
+  --config ./config.example.ini
+```
+
+Send all files from a zip as documents / 发送 zip 内全部文件为文档:
+```bash
+$CLI send-file \
+  --chat-id "-1001234567890" \
+  --zip-file /path/to/archive.zip \
   --config ./config.example.ini
 ```
 
