@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"archive/zip"
 	"fmt"
 	"log"
 	"os"
@@ -12,7 +13,6 @@ import (
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/ziputil"
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/pkgs/constants"
 	"github.com/spf13/cobra"
-	zip "github.com/yeka/zip"
 )
 
 func newSendFileCmd() *cobra.Command {
@@ -215,9 +215,9 @@ func sendFilesFromZip(client *telegram.Client, chatID string, topicID *int, zipP
 				"zip password check failed: %s (file=%s, encrypted=%t, flags=0x%x, method=%d, comp=%d, uncomp=%d, crc=0x%x, err=%v)",
 				zipPath,
 				first.Name,
-				first.IsEncrypted(),
+				ziputil.IsEncrypted(first),
 				first.Flags,
-				first.Method,
+				ziputil.EffectiveMethod(first),
 				first.CompressedSize64,
 				first.UncompressedSize64,
 				first.CRC32,

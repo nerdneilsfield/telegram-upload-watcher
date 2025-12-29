@@ -1,6 +1,7 @@
 package sender
 
 import (
+	"archive/zip"
 	"context"
 	"fmt"
 	"log"
@@ -13,7 +14,6 @@ import (
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/runcontrol"
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/telegram"
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/ziputil"
-	zip "github.com/yeka/zip"
 )
 
 type Config struct {

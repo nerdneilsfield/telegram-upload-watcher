@@ -7,7 +7,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/valyala/fasthttp v1.55.0
 	github.com/wailsapp/wails/v2 v2.11.0
-	github.com/yeka/zip v0.0.0-20231116150916-03d6312748a9
+	golang.org/x/crypto v0.33.0
 	gopkg.in/ini.v1 v1.67.0
 )
 
@@ -40,7 +40,6 @@ require (
 	github.com/valyala/fasttemplate v1.2.2 // indirect
 	github.com/wailsapp/go-webview2 v1.0.22 // indirect
 	github.com/wailsapp/mimetype v1.4.1 // indirect
-	golang.org/x/crypto v0.33.0 // indirect
 	golang.org/x/image v0.12.0 // indirect
 	golang.org/x/net v0.35.0 // indirect
 	golang.org/x/sys v0.30.0 // indirect
