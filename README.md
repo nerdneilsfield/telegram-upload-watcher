@@ -212,3 +212,31 @@ GoReleaser (snapshot):
 ```bash
 goreleaser release --snapshot --clean
 ```
+
+## GUI (Wails) / 图形界面
+The Go GUI lives under `go/gui` and uses Wails + Svelte + Skeleton UI.
+GUI includes tabs for Watch and one-off Send (images/files/video/audio).
+
+Requirements:
+- Go 1.24+
+- Node.js + npm
+- Wails CLI (`wails`) via `go install github.com/wailsapp/wails/v2/cmd/wails@latest`
+- Linux build deps (Ubuntu): `sudo apt install libgtk-3-dev libwebkit2gtk-4.0-dev pkg-config`
+
+Dev:
+```bash
+cd go/gui
+wails dev
+```
+
+Build:
+```bash
+cd go/gui
+wails build
+```
+
+Ubuntu 24.04+ (webkit2gtk 4.1):
+```bash
+cd go/gui
+wails build -tags webkit2_41
+```

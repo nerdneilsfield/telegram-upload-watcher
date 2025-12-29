@@ -1,13 +1,14 @@
 version: 2
 env:
   - GO111MODULE=on
-  - CGO_ENABLED=0
 
 builds:
   -
     id: telegram-send-go
     main: ./go
     binary: telegram-send-go
+    env:
+      - CGO_ENABLED=0
     ldflags:
       - -s -w
       - -X main.version={{ .Version }}
@@ -27,9 +28,28 @@ builds:
           - -X main.version={{ .Version }}
           - -X main.buildTime={{ .Date }}
           - -X main.gitCommit={{ .FullCommit }}
+  -
+    id: telegram-upload-watcher-gui
+    main: ./go/gui
+    binary: telegram-upload-watcher-gui
+    env:
+      - CGO_ENABLED=1
+    tags:
+      - webkit2_41
+    hooks:
+      before:
+        - sh -c "cd go/gui/frontend && npm install && npm run build"
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
 
 archives:
   -
+    id: cli
     builds:
       - telegram-send-go
     format_overrides:
@@ -37,6 +57,13 @@ archives:
         format: zip
     files:
       - config.example.ini
+  -
+    id: gui
+    builds:
+      - telegram-upload-watcher-gui
+    format_overrides:
+      - goos: windows
+        format: zip
 
 release:
   github:

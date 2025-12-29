@@ -1,6 +1,7 @@
 package sender
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -9,6 +10,7 @@ import (
 
 	imageutil "github.com/nerdneilsfield/telegram-upload-watcher/go/internal/image"
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/queue"
+	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/runcontrol"
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/telegram"
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/ziputil"
 	zip "github.com/yeka/zip"
@@ -76,6 +78,158 @@ func Loop(cfg Config, q *queue.Queue, client *telegram.Client) {
 		}
 
 		time.Sleep(cfg.SendInterval)
+	}
+}
+
+type ProgressUpdate struct {
+	Status         string `json:"status"`
+	CurrentFile    string `json:"current_file"`
+	RemainingFiles int    `json:"remaining_files"`
+	TotalFiles     int    `json:"total_files"`
+	CompletedFiles int    `json:"completed_files"`
+	PerFileMS      int64  `json:"per_file_ms"`
+	ETAMS          int64  `json:"eta_ms"`
+}
+
+type ProgressReporter func(update ProgressUpdate)
+
+func LoopWithContext(
+	ctx context.Context,
+	cfg Config,
+	q *queue.Queue,
+	client *telegram.Client,
+	pause *runcontrol.PauseGate,
+	report ProgressReporter,
+) {
+	sentSincePause := 0
+	var avgPerFileMS int64
+	for {
+		if pause != nil && !pause.Wait(ctx) {
+			return
+		}
+		pending := q.Pending(0)
+		if len(pending) == 0 {
+			if report != nil {
+				report(ProgressUpdate{Status: "idle"})
+			}
+			if !sleepWithContext(ctx, cfg.SendInterval) {
+				return
+			}
+			continue
+		}
+
+		for i := 0; i < len(pending); {
+			if pause != nil && !pause.Wait(ctx) {
+				return
+			}
+			item := pending[i]
+			sendType := item.SendType
+			if sendType == "" {
+				sendType = "image"
+			}
+
+			start := time.Now()
+			sent := 0
+			perFileMS := int64(0)
+			if sendType == "image" {
+				group := []*queue.Item{}
+				for i < len(pending) && len(group) < cfg.GroupSize {
+					current := pending[i]
+					currentType := current.SendType
+					if currentType == "" {
+						currentType = "image"
+					}
+					if currentType != "image" {
+						break
+					}
+					group = append(group, current)
+					i++
+				}
+				sent = sendImageGroup(cfg, q, client, group)
+				if len(group) > 0 {
+					perFileMS = time.Since(start).Milliseconds() / int64(len(group))
+					reportProgress(report, group[len(group)-1], q, perFileMS, &avgPerFileMS, "sending")
+				}
+			} else {
+				sent = sendSingle(cfg, q, client, item, sendType)
+				perFileMS = time.Since(start).Milliseconds()
+				reportProgress(report, item, q, perFileMS, &avgPerFileMS, "sending")
+				i++
+			}
+			sentSincePause += sent
+			if !sleepWithContext(ctx, cfg.BatchDelay) {
+				return
+			}
+
+			if cfg.PauseEvery > 0 && sentSincePause >= cfg.PauseEvery && cfg.PauseSeconds > 0 {
+				log.Printf("pausing sender for %s after %d images", cfg.PauseSeconds, sentSincePause)
+				if !sleepWithContext(ctx, cfg.PauseSeconds) {
+					return
+				}
+				sentSincePause = 0
+			}
+		}
+
+		if !sleepWithContext(ctx, cfg.SendInterval) {
+			return
+		}
+	}
+}
+
+func reportProgress(report ProgressReporter, item *queue.Item, q *queue.Queue, perFileMS int64, avg *int64, status string) {
+	if report == nil || item == nil {
+		return
+	}
+	if perFileMS > 0 {
+		if *avg == 0 {
+			*avg = perFileMS
+		} else {
+			*avg = (*avg*7 + perFileMS) / 8
+		}
+	}
+	remaining := len(q.Pending(0))
+	stats := q.Stats()
+	total := 0
+	for _, count := range stats {
+		total += count
+	}
+	completed := total - (stats[queue.StatusQueued] + stats[queue.StatusFailed] + stats[queue.StatusSending])
+	if completed < 0 {
+		completed = 0
+	}
+	eta := int64(remaining) * *avg
+	report(ProgressUpdate{
+		Status:         status,
+		CurrentFile:    displayName(item),
+		RemainingFiles: remaining,
+		TotalFiles:     total,
+		CompletedFiles: completed,
+		PerFileMS:      *avg,
+		ETAMS:          eta,
+	})
+}
+
+func displayName(item *queue.Item) string {
+	if item == nil {
+		return ""
+	}
+	if item.SourceType == "zip" && item.InnerPath != nil {
+		return fmt.Sprintf("%s:%s", filepath.Base(item.Path), *item.InnerPath)
+	}
+	return filepath.Base(item.Path)
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		return true
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 

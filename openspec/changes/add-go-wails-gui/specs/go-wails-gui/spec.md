@@ -17,6 +17,21 @@ The GUI SHALL provide start, pause, continue, and stop controls for watch/send o
 - **WHEN** the user continues
 - **THEN** scanning/sending resumes from the queue state
 
+### Requirement: Mode Tabs
+The GUI SHALL provide tabs for watch mode and one-off send modes (send-images,
+send-file, send-video, send-audio).
+
+#### Scenario: Switch to send-images
+- **WHEN** the user selects the send-images tab
+- **THEN** the GUI shows inputs for image directory/zip and send options
+
+### Requirement: Collapsible Advanced Options
+The GUI SHALL group advanced settings in collapsible sections to reduce clutter.
+
+#### Scenario: Toggle advanced settings
+- **WHEN** the user expands advanced settings
+- **THEN** additional tuning options (intervals, batching, filters) are shown
+
 ### Requirement: Configuration Editor
 The GUI SHALL allow editing Telegram config values and watch/send settings,
 including: `api_url`, bot tokens, `chat_id`, `topic_id`, watch directory,

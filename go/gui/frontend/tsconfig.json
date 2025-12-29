@@ -1,0 +1,9 @@
+{
+  "extends": "@tsconfig/svelte/tsconfig.json",
+  "compilerOptions": {
+    "types": ["svelte"],
+    "sourceMap": true,
+    "strict": true
+  },
+  "include": ["src/**/*", "src/**/*.d.ts", "wailsjs/**/*"]
+}

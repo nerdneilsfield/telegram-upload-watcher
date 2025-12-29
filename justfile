@@ -1,6 +1,8 @@
 projectname := "telegram-upload-watcher"
 gobin := "telegram-send-go"
 go_cmd := "./go"
+gui_dir := "./go/gui"
+gui_bin := "telegram-upload-watcher-gui"
 
 default:
     @just --list
@@ -11,6 +13,27 @@ build:
         go build -ldflags "-X main.version=$(git describe --abbrev=0 --tags 2>/dev/null || echo dev) -X main.buildTime=$(date +%Y%m%d%H%M%S) -X main.gitCommit=$(git rev-parse HEAD 2>/dev/null || echo unknown)" -o {{gobin}}.exe {{go_cmd}}; \
     else \
         go build -ldflags "-X main.version=$(git describe --abbrev=0 --tags 2>/dev/null || echo dev) -X main.buildTime=$(date +%Y%m%d%H%M%S) -X main.gitCommit=$(git rev-parse HEAD 2>/dev/null || echo unknown)" -o {{gobin}} {{go_cmd}}; \
+    fi
+
+# Build GUI binary (Wails)
+build-gui:
+    @command -v wails >/dev/null 2>&1 || { echo "wails not found. Install with: go install github.com/wailsapp/wails/v2/cmd/wails@latest"; exit 1; }
+    @if [ "{{os()}}" = "linux" ]; then \
+        cd {{gui_dir}} && wails build -tags webkit2_41; \
+    else \
+        cd {{gui_dir}} && wails build; \
+    fi
+
+# Build CLI + GUI
+build-all: build build-gui
+
+# Run GUI dev server
+dev-gui:
+    @command -v wails >/dev/null 2>&1 || { echo "wails not found. Install with: go install github.com/wailsapp/wails/v2/cmd/wails@latest"; exit 1; }
+    @if [ "{{os()}}" = "linux" ]; then \
+        cd {{gui_dir}} && wails dev -tags webkit2_41; \
+    else \
+        cd {{gui_dir}} && wails dev; \
     fi
 
 # Build static Go binary
@@ -39,4 +62,4 @@ test:
 
 # Clean artifacts
 clean:
-    rm -rf {{gobin}} {{gobin}}.exe dist coverage.out
+    rm -rf {{gobin}} {{gobin}}.exe dist coverage.out {{gui_dir}}/build

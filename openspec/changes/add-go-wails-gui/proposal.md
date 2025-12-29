@@ -8,6 +8,7 @@ for long watch/send runs.
 - Provide a configuration editor for Telegram + watch/send settings.
 - Show live progress metrics: current file, remaining file count, per-file time, ETA.
 - Add start/pause/continue/stop controls for watch/send operations.
+- Add mode tabs for watch and send commands (images, file, video, audio) with advanced settings collapsible.
 
 ## Impact
 - Affected specs: new `go-wails-gui` capability.

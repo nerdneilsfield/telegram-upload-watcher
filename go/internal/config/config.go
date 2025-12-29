@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"strings"
 
 	"gopkg.in/ini.v1"
@@ -44,4 +45,23 @@ func LoadConfig(path string) ([]string, []string, error) {
 	}
 
 	return apiURLs, tokens, nil
+}
+
+func SaveConfig(path string, apiURLs []string, tokens []string) error {
+	cfg := ini.Empty()
+	apiURL := strings.Join(apiURLs, ",")
+	if apiURL == "" {
+		apiURL = "https://api.telegram.org"
+	}
+	cfg.Section("Telegram").Key("api_url").SetValue(apiURL)
+	for idx, token := range tokens {
+		if strings.TrimSpace(token) == "" {
+			continue
+		}
+		section := cfg.Section(fmt.Sprintf("Token%d", idx+1))
+		section.Key("name").SetValue(fmt.Sprintf("token-%d", idx+1))
+		section.Key("id").SetValue(fmt.Sprintf("token-%d", idx+1))
+		section.Key("token").SetValue(strings.TrimSpace(token))
+	}
+	return cfg.SaveTo(path)
 }

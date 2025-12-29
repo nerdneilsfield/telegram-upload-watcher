@@ -2,6 +2,7 @@ package watcher
 
 import (
 	"archive/zip"
+	"context"
 	"log"
 	"os"
 	"path"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/queue"
+	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/runcontrol"
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/pkgs/constants"
 )
 
@@ -319,5 +321,35 @@ func WatchLoop(cfg Config, q *queue.Queue) {
 			log.Printf("enqueued %d file(s)", enqueued)
 		}
 		time.Sleep(cfg.ScanInterval)
+	}
+}
+
+func WatchLoopWithContext(ctx context.Context, cfg Config, q *queue.Queue, pause *runcontrol.PauseGate) {
+	tracker := newTracker(cfg.SettleSeconds)
+	for {
+		if pause != nil && !pause.Wait(ctx) {
+			return
+		}
+		enqueued := scanOnce(cfg, q, tracker)
+		if enqueued > 0 {
+			log.Printf("enqueued %d file(s)", enqueued)
+		}
+		if !sleepWithContext(ctx, cfg.ScanInterval) {
+			return
+		}
+	}
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		return true
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }

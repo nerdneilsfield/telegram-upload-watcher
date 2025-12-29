@@ -12,6 +12,7 @@ events to the frontend.
   - Svelte + Skeleton UI (Tailwind) for layout and controls.
   - Config editor form with validation.
   - Start/pause/continue/stop controls and status indicators.
+  - Tabs for watch vs send actions; advanced settings in collapsible panels.
   - Progress panel showing current file, remaining count, per-file time, ETA.
 
 ## Config Handling

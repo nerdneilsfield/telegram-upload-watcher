@@ -1,0 +1,58 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  font-size: 17px;
+}
+
+body {
+  font-family: "Segoe UI", "Manrope", "Avenir Next", sans-serif;
+  background: radial-gradient(circle at top, #f3f6fb 0%, #edf1f7 45%, #e6edf5 100%);
+  color: #1f2937;
+}
+
+fluent-card {
+  display: block;
+  border-radius: 24px;
+  padding: 20px;
+  background: #ffffff;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.08);
+}
+
+fluent-text-field,
+fluent-text-area {
+  width: 100%;
+}
+
+summary {
+  list-style: none;
+}
+
+summary::-webkit-details-marker {
+  display: none;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 12px;
+  appearance: none;
+  border-radius: 999px;
+  overflow: hidden;
+  background: #e2e8f0;
+}
+
+.progress-bar::-webkit-progress-bar {
+  background: #e2e8f0;
+  border-radius: 999px;
+}
+
+.progress-bar::-webkit-progress-value {
+  background: linear-gradient(90deg, #2563eb, #22d3ee);
+  border-radius: 999px;
+}
+
+.progress-bar::-moz-progress-bar {
+  background: linear-gradient(90deg, #2563eb, #22d3ee);
+  border-radius: 999px;
+}

@@ -220,6 +220,8 @@ go/.cache/
 /telegram-send-go
 /telegram-send-go.exe
 .goreleaser/
+go/gui/frontend/node_modules/
+go/gui/frontend/dist/
 
 # Keep Go source tracked
 !go/cmd/**
