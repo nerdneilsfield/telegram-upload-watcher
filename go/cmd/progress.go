@@ -3,25 +3,50 @@ package cmd
 import (
 	"fmt"
 	"os"
+
+	ansi "github.com/k0kubun/go-ansi"
+	"github.com/schollz/progressbar/v3"
 )
 
 type progressTracker struct {
+	bar     *progressbar.ProgressBar
 	enabled bool
 	total   int
 	label   string
 }
 
+func newProgressTracker(total int, label string) progressTracker {
+	if total <= 0 {
+		return progressTracker{enabled: false}
+	}
+	bar := progressbar.NewOptions(total,
+		progressbar.OptionSetWriter(ansi.NewAnsiStdout()),
+		progressbar.OptionSetWidth(18),
+		progressbar.OptionShowCount(),
+		progressbar.OptionShowIts(),
+		progressbar.OptionSetPredictTime(false),
+		progressbar.OptionSetDescription(label),
+	)
+	return progressTracker{bar: bar, enabled: true, total: total, label: label}
+}
+
 func (p progressTracker) Print(processed int, sent int, skipped int, done bool) {
-	if !p.enabled || p.total <= 0 {
+	if !p.enabled || p.total <= 0 || p.bar == nil {
 		return
 	}
-	percent := float64(processed) / float64(p.total) * 100
-	line := fmt.Sprintf("%s %d/%d (%.1f%%) sent=%d skipped=%d", p.label, processed, p.total, percent, sent, skipped)
+	if processed < 0 {
+		processed = 0
+	}
+	if processed > p.total {
+		processed = p.total
+	}
+	desc := fmt.Sprintf("%s sent=%d skipped=%d", p.label, sent, skipped)
+	p.bar.Describe(desc)
+	_ = p.bar.Set(processed)
 	if done {
-		fmt.Fprintln(os.Stderr, "\r"+line)
-		return
+		_ = p.bar.Finish()
+		fmt.Fprintln(os.Stdout)
 	}
-	fmt.Fprintf(os.Stderr, "\r%s", line)
 }
 
 func clampRange(start int, end int, total int) (int, int) {

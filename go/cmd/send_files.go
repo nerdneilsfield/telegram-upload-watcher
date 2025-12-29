@@ -72,7 +72,15 @@ func newSendFilesCmd(use string, short string, sendType string) *cobra.Command {
 
 			retry := telegram.RetryConfig{MaxRetries: cfg.maxRetries, Delay: cfg.retryDelay}
 			if filePath != "" {
-				progressState := progressTracker{enabled: true, total: 1, label: sendTypeLabel(sendType)}
+				label := sendTypeLabel(sendType)
+				progressState := newProgressTracker(1, label)
+				startedAt := time.Now()
+				_ = client.SendMessage(
+					cfg.chatID,
+					fmt.Sprintf("Starting %s upload: 1 file(s) at %s", label, formatTimestamp(startedAt)),
+					topicPtr(cfg),
+					retry,
+				)
 				data, err := os.ReadFile(filePath)
 				if err != nil {
 					progressState.Print(1, 0, 1, true)
@@ -84,6 +92,28 @@ func newSendFilesCmd(use string, short string, sendType string) *cobra.Command {
 					return err
 				}
 				progressState.Print(1, 1, 0, true)
+				finishedAt := time.Now()
+				elapsed := finishedAt.Sub(startedAt)
+				avgPer := elapsed
+				sentBytes := int64(len(data))
+				_ = client.SendMessage(
+					cfg.chatID,
+					fmt.Sprintf(
+						"Completed %s upload from %s at %s (elapsed %s, avg/file %s, total %s, avg %s, sent %d, skipped %d)",
+						label,
+						filename,
+						formatTimestamp(finishedAt),
+						formatDuration(elapsed),
+						formatDuration(avgPer),
+						formatBytes(sentBytes),
+						formatSpeed(sentBytes, elapsed),
+						1,
+						0,
+					),
+					topicPtr(cfg),
+					retry,
+				)
+				printSummary(label, filename, startedAt, finishedAt, elapsed, 1, 0, sentBytes)
 			}
 			if dirPath != "" {
 				sendFilesFromDir(
@@ -150,14 +180,16 @@ func sendFilesFromDir(client *telegram.Client, chatID string, topicID *int, dir 
 	}
 
 	label := sendTypeLabel(sendType)
-	_ = client.SendMessage(chatID, fmt.Sprintf("Starting %s upload: %d file(s)", label, len(files)), topicID, retry)
+	startedAt := time.Now()
+	_ = client.SendMessage(chatID, fmt.Sprintf("Starting %s upload: %d file(s) at %s", label, len(files), formatTimestamp(startedAt)), topicID, retry)
 
 	rangeStart, rangeEnd := clampRange(startIndex, endIndex, len(files))
 	total := rangeEnd - rangeStart
-	progressState := progressTracker{enabled: true, total: total, label: label}
+	progressState := newProgressTracker(total, label)
 	processed := 0
 	sent := 0
 	skipped := 0
+	sentBytes := int64(0)
 	for idx, path := range files {
 		if idx < rangeStart {
 			continue
@@ -186,13 +218,37 @@ func sendFilesFromDir(client *telegram.Client, chatID string, topicID *int, dir 
 		} else {
 			processed++
 			sent++
+			sentBytes += int64(len(data))
 			progressState.Print(processed, sent, skipped, false)
 		}
 		time.Sleep(delay)
 	}
 	progressState.Print(processed, sent, skipped, true)
 
-	_ = client.SendMessage(chatID, fmt.Sprintf("Completed %s upload from %s", label, dir), topicID, retry)
+	finishedAt := time.Now()
+	elapsed := finishedAt.Sub(startedAt)
+	avgPer := time.Duration(0)
+	if sent > 0 {
+		avgPer = elapsed / time.Duration(sent)
+	}
+	_ = client.SendMessage(
+		chatID,
+		fmt.Sprintf(
+			"Completed %s upload from %s at %s (elapsed %s, avg/file %s, total %s, avg %s, sent %d, skipped %d)",
+			label,
+			dir,
+			formatTimestamp(finishedAt),
+			formatDuration(elapsed),
+			formatDuration(avgPer),
+			formatBytes(sentBytes),
+			formatSpeed(sentBytes, elapsed),
+			sent,
+			skipped,
+		),
+		topicID,
+		retry,
+	)
+	printSummary(label, dir, startedAt, finishedAt, elapsed, sent, skipped, sentBytes)
 }
 
 func sendFilesFromZip(client *telegram.Client, chatID string, topicID *int, zipPath string, sendType string, startIndex int, endIndex int, delay time.Duration, include []string, exclude []string, zipPasswords []string, logZipPasswords bool, retry telegram.RetryConfig) {
@@ -250,14 +306,16 @@ func sendFilesFromZip(client *telegram.Client, chatID string, topicID *int, zipP
 	}
 
 	label := sendTypeLabel(sendType)
-	_ = client.SendMessage(chatID, fmt.Sprintf("Starting %s upload: %d file(s)", label, len(names)), topicID, retry)
+	startedAt := time.Now()
+	_ = client.SendMessage(chatID, fmt.Sprintf("Starting %s upload: %d file(s) at %s", label, len(names), formatTimestamp(startedAt)), topicID, retry)
 
 	rangeStart, rangeEnd := clampRange(startIndex, endIndex, len(names))
 	total := rangeEnd - rangeStart
-	progressState := progressTracker{enabled: true, total: total, label: label}
+	progressState := newProgressTracker(total, label)
 	processed := 0
 	sent := 0
 	skipped := 0
+	sentBytes := int64(0)
 	for idx, name := range names {
 		if idx < rangeStart {
 			continue
@@ -287,13 +345,37 @@ func sendFilesFromZip(client *telegram.Client, chatID string, topicID *int, zipP
 		} else {
 			processed++
 			sent++
+			sentBytes += int64(len(data))
 			progressState.Print(processed, sent, skipped, false)
 		}
 		time.Sleep(delay)
 	}
 	progressState.Print(processed, sent, skipped, true)
 
-	_ = client.SendMessage(chatID, fmt.Sprintf("Completed %s upload from %s", label, filepath.Base(zipPath)), topicID, retry)
+	finishedAt := time.Now()
+	elapsed := finishedAt.Sub(startedAt)
+	avgPer := time.Duration(0)
+	if sent > 0 {
+		avgPer = elapsed / time.Duration(sent)
+	}
+	_ = client.SendMessage(
+		chatID,
+		fmt.Sprintf(
+			"Completed %s upload from %s at %s (elapsed %s, avg/file %s, total %s, avg %s, sent %d, skipped %d)",
+			label,
+			filepath.Base(zipPath),
+			formatTimestamp(finishedAt),
+			formatDuration(elapsed),
+			formatDuration(avgPer),
+			formatBytes(sentBytes),
+			formatSpeed(sentBytes, elapsed),
+			sent,
+			skipped,
+		),
+		topicID,
+		retry,
+	)
+	printSummary(label, filepath.Base(zipPath), startedAt, finishedAt, elapsed, sent, skipped, sentBytes)
 }
 
 func collectFiles(root string, include []string, exclude []string, enableZip bool, allowedExts []string) []string {

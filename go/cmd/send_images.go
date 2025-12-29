@@ -82,7 +82,6 @@ func newSendImagesCmd() *cobra.Command {
 					maxDimension,
 					maxBytes,
 					pngStartLevel,
-					true,
 					retry,
 				)
 			}
@@ -103,7 +102,6 @@ func newSendImagesCmd() *cobra.Command {
 					maxDimension,
 					maxBytes,
 					pngStartLevel,
-					true,
 					retry,
 				)
 			}
@@ -131,7 +129,7 @@ func newSendImagesCmd() *cobra.Command {
 	return cmd
 }
 
-func sendImagesFromDir(client *telegram.Client, chatID string, topicID *int, dir string, groupSize int, startIndex int, endIndex int, delay time.Duration, include []string, exclude []string, enableZip bool, zipPasswords []string, logZipPasswords bool, maxDimension int, maxBytes int, pngStartLevel int, progress bool, retry telegram.RetryConfig) {
+func sendImagesFromDir(client *telegram.Client, chatID string, topicID *int, dir string, groupSize int, startIndex int, endIndex int, delay time.Duration, include []string, exclude []string, enableZip bool, zipPasswords []string, logZipPasswords bool, maxDimension int, maxBytes int, pngStartLevel int, retry telegram.RetryConfig) {
 	files := []string{}
 	filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -162,18 +160,21 @@ func sendImagesFromDir(client *telegram.Client, chatID string, topicID *int, dir
 		return
 	}
 
-	_ = client.SendMessage(chatID, fmt.Sprintf("Starting image upload: %d file(s)", len(files)), topicID, retry)
+	startedAt := time.Now()
+	_ = client.SendMessage(chatID, fmt.Sprintf("Starting image upload: %d file(s) at %s", len(files), formatTimestamp(startedAt)), topicID, retry)
 
 	minIndex := startIndex * groupSize
 	maxIndex := endIndex * groupSize
 	rangeStart, rangeEnd := clampRange(minIndex, maxIndex, len(files))
 	total := rangeEnd - rangeStart
-	progressState := progressTracker{enabled: progress, total: total, label: "progress"}
+	progressState := newProgressTracker(total, "image")
 
 	media := []telegram.MediaFile{}
+	batchBytes := int64(0)
 	processed := 0
 	sent := 0
 	skipped := 0
+	sentBytes := int64(0)
 	for idx, path := range files {
 		if idx < rangeStart {
 			continue
@@ -182,7 +183,7 @@ func sendImagesFromDir(client *telegram.Client, chatID string, topicID *int, dir
 			break
 		}
 		if strings.HasSuffix(strings.ToLower(path), ".zip") {
-			sendImagesFromZip(client, chatID, topicID, path, groupSize, 0, 0, delay, include, exclude, zipPasswords, logZipPasswords, maxDimension, maxBytes, pngStartLevel, progress, retry)
+			sendImagesFromZip(client, chatID, topicID, path, groupSize, 0, 0, delay, include, exclude, zipPasswords, logZipPasswords, maxDimension, maxBytes, pngStartLevel, retry)
 			processed++
 			progressState.Print(processed, sent, skipped, false)
 			continue
@@ -203,14 +204,19 @@ func sendImagesFromDir(client *telegram.Client, chatID string, topicID *int, dir
 			continue
 		}
 		media = append(media, prepared)
+		batchBytes += int64(len(prepared.Data))
 		if len(media) >= groupSize {
 			if err := client.SendMediaGroup(chatID, media, topicID, retry); err != nil {
 				log.Printf("send media group failed: %v", err)
+				skipped += len(media)
+			} else {
+				sent += len(media)
+				sentBytes += batchBytes
 			}
-			sent += len(media)
 			processed += len(media)
 			progressState.Print(processed, sent, skipped, false)
 			media = media[:0]
+			batchBytes = 0
 			time.Sleep(delay)
 		}
 	}
@@ -218,16 +224,41 @@ func sendImagesFromDir(client *telegram.Client, chatID string, topicID *int, dir
 	if len(media) > 0 {
 		if err := client.SendMediaGroup(chatID, media, topicID, retry); err != nil {
 			log.Printf("send media group failed: %v", err)
+			skipped += len(media)
+		} else {
+			sent += len(media)
+			sentBytes += batchBytes
 		}
-		sent += len(media)
 		processed += len(media)
 	}
 	progressState.Print(processed, sent, skipped, true)
 
-	_ = client.SendMessage(chatID, fmt.Sprintf("Completed image upload from %s", dir), topicID, retry)
+	finishedAt := time.Now()
+	elapsed := finishedAt.Sub(startedAt)
+	avgPer := time.Duration(0)
+	if sent > 0 {
+		avgPer = elapsed / time.Duration(sent)
+	}
+	_ = client.SendMessage(
+		chatID,
+		fmt.Sprintf(
+			"Completed image upload from %s at %s (elapsed %s, avg/image %s, total %s, avg %s, sent %d, skipped %d)",
+			dir,
+			formatTimestamp(finishedAt),
+			formatDuration(elapsed),
+			formatDuration(avgPer),
+			formatBytes(sentBytes),
+			formatSpeed(sentBytes, elapsed),
+			sent,
+			skipped,
+		),
+		topicID,
+		retry,
+	)
+	printSummary("image", dir, startedAt, finishedAt, elapsed, sent, skipped, sentBytes)
 }
 
-func sendImagesFromZip(client *telegram.Client, chatID string, topicID *int, zipPath string, groupSize int, startIndex int, endIndex int, delay time.Duration, include []string, exclude []string, zipPasswords []string, logZipPasswords bool, maxDimension int, maxBytes int, pngStartLevel int, progress bool, retry telegram.RetryConfig) {
+func sendImagesFromZip(client *telegram.Client, chatID string, topicID *int, zipPath string, groupSize int, startIndex int, endIndex int, delay time.Duration, include []string, exclude []string, zipPasswords []string, logZipPasswords bool, maxDimension int, maxBytes int, pngStartLevel int, retry telegram.RetryConfig) {
 	archive, err := zip.OpenReader(zipPath)
 	if err != nil {
 		log.Printf("invalid zip: %s", zipPath)
@@ -279,17 +310,20 @@ func sendImagesFromZip(client *telegram.Client, chatID string, topicID *int, zip
 		}
 	}
 
-	_ = client.SendMessage(chatID, fmt.Sprintf("Starting image upload: %d file(s)", len(names)), topicID, retry)
+	startedAt := time.Now()
+	_ = client.SendMessage(chatID, fmt.Sprintf("Starting image upload: %d file(s) at %s", len(names), formatTimestamp(startedAt)), topicID, retry)
 
 	minIndex := startIndex * groupSize
 	maxIndex := endIndex * groupSize
 	rangeStart, rangeEnd := clampRange(minIndex, maxIndex, len(names))
 	total := rangeEnd - rangeStart
-	progressState := progressTracker{enabled: progress, total: total, label: "progress"}
+	progressState := newProgressTracker(total, "image")
 	media := []telegram.MediaFile{}
+	batchBytes := int64(0)
 	processed := 0
 	sent := 0
 	skipped := 0
+	sentBytes := int64(0)
 
 	for idx, name := range names {
 		if idx < rangeStart {
@@ -321,14 +355,19 @@ func sendImagesFromZip(client *telegram.Client, chatID string, topicID *int, zip
 			continue
 		}
 		media = append(media, prepared)
+		batchBytes += int64(len(prepared.Data))
 		if len(media) >= groupSize {
 			if err := client.SendMediaGroup(chatID, media, topicID, retry); err != nil {
 				log.Printf("send media group failed: %v", err)
+				skipped += len(media)
+			} else {
+				sent += len(media)
+				sentBytes += batchBytes
 			}
-			sent += len(media)
 			processed += len(media)
 			progressState.Print(processed, sent, skipped, false)
 			media = media[:0]
+			batchBytes = 0
 			time.Sleep(delay)
 		}
 	}
@@ -336,13 +375,38 @@ func sendImagesFromZip(client *telegram.Client, chatID string, topicID *int, zip
 	if len(media) > 0 {
 		if err := client.SendMediaGroup(chatID, media, topicID, retry); err != nil {
 			log.Printf("send media group failed: %v", err)
+			skipped += len(media)
+		} else {
+			sent += len(media)
+			sentBytes += batchBytes
 		}
-		sent += len(media)
 		processed += len(media)
 	}
 	progressState.Print(processed, sent, skipped, true)
 
-	_ = client.SendMessage(chatID, fmt.Sprintf("Completed image upload from %s", filepath.Base(zipPath)), topicID, retry)
+	finishedAt := time.Now()
+	elapsed := finishedAt.Sub(startedAt)
+	avgPer := time.Duration(0)
+	if sent > 0 {
+		avgPer = elapsed / time.Duration(sent)
+	}
+	_ = client.SendMessage(
+		chatID,
+		fmt.Sprintf(
+			"Completed image upload from %s at %s (elapsed %s, avg/image %s, total %s, avg %s, sent %d, skipped %d)",
+			filepath.Base(zipPath),
+			formatTimestamp(finishedAt),
+			formatDuration(elapsed),
+			formatDuration(avgPer),
+			formatBytes(sentBytes),
+			formatSpeed(sentBytes, elapsed),
+			sent,
+			skipped,
+		),
+		topicID,
+		retry,
+	)
+	printSummary("image", filepath.Base(zipPath), startedAt, finishedAt, elapsed, sent, skipped, sentBytes)
 }
 
 func matchesExclude(rel string, patterns []string) bool {
@@ -402,4 +466,25 @@ func prepareImageMedia(data []byte, filename string, maxDimension int, maxBytes 
 
 func maxInt() int {
 	return int(^uint(0) >> 1)
+}
+
+func printSummary(kind string, source string, startedAt time.Time, finishedAt time.Time, elapsed time.Duration, sent int, skipped int, bytes int64) {
+	avgPer := time.Duration(0)
+	if sent > 0 {
+		avgPer = elapsed / time.Duration(sent)
+	}
+	fmt.Fprintf(
+		os.Stdout,
+		"Summary %s from %s: start=%s end=%s elapsed=%s avg=%s total=%s speed=%s sent=%d skipped=%d\n",
+		kind,
+		source,
+		formatTimestamp(startedAt),
+		formatTimestamp(finishedAt),
+		formatDuration(elapsed),
+		formatDuration(avgPer),
+		formatBytes(bytes),
+		formatSpeed(bytes, elapsed),
+		sent,
+		skipped,
+	)
 }
