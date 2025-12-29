@@ -72,14 +72,18 @@ func newSendFilesCmd(use string, short string, sendType string) *cobra.Command {
 
 			retry := telegram.RetryConfig{MaxRetries: cfg.maxRetries, Delay: cfg.retryDelay}
 			if filePath != "" {
+				progressState := progressTracker{enabled: true, total: 1, label: sendTypeLabel(sendType)}
 				data, err := os.ReadFile(filePath)
 				if err != nil {
+					progressState.Print(1, 0, 1, true)
 					return err
 				}
 				filename := filepath.Base(filePath)
 				if err := sendSingleFile(client, cfg.chatID, topicPtr(cfg), sendType, filename, data, retry); err != nil {
+					progressState.Print(1, 0, 1, true)
 					return err
 				}
+				progressState.Print(1, 1, 0, true)
 			}
 			if dirPath != "" {
 				sendFilesFromDir(
@@ -148,28 +152,45 @@ func sendFilesFromDir(client *telegram.Client, chatID string, topicID *int, dir 
 	label := sendTypeLabel(sendType)
 	_ = client.SendMessage(chatID, fmt.Sprintf("Starting %s upload: %d file(s)", label, len(files)), topicID, retry)
 
-	minIndex := startIndex
-	maxIndex := endIndex
+	rangeStart, rangeEnd := clampRange(startIndex, endIndex, len(files))
+	total := rangeEnd - rangeStart
+	progressState := progressTracker{enabled: true, total: total, label: label}
+	processed := 0
+	sent := 0
+	skipped := 0
 	for idx, path := range files {
-		if idx < minIndex {
+		if idx < rangeStart {
 			continue
 		}
-		if endIndex > 0 && idx >= maxIndex {
+		if idx >= rangeEnd {
 			break
 		}
 		if strings.HasSuffix(strings.ToLower(path), ".zip") && enableZip {
 			sendFilesFromZip(client, chatID, topicID, path, sendType, 0, 0, delay, include, exclude, zipPasswords, logZipPasswords, retry)
+			processed++
+			progressState.Print(processed, sent, skipped, false)
 			continue
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
+			processed++
+			skipped++
+			progressState.Print(processed, sent, skipped, false)
 			continue
 		}
 		if err := sendSingleFile(client, chatID, topicID, sendType, filepath.Base(path), data, retry); err != nil {
 			log.Printf("send failed: %v", err)
+			processed++
+			skipped++
+			progressState.Print(processed, sent, skipped, false)
+		} else {
+			processed++
+			sent++
+			progressState.Print(processed, sent, skipped, false)
 		}
 		time.Sleep(delay)
 	}
+	progressState.Print(processed, sent, skipped, true)
 
 	_ = client.SendMessage(chatID, fmt.Sprintf("Completed %s upload from %s", label, dir), topicID, retry)
 }
@@ -231,28 +252,46 @@ func sendFilesFromZip(client *telegram.Client, chatID string, topicID *int, zipP
 	label := sendTypeLabel(sendType)
 	_ = client.SendMessage(chatID, fmt.Sprintf("Starting %s upload: %d file(s)", label, len(names)), topicID, retry)
 
-	minIndex := startIndex
-	maxIndex := endIndex
+	rangeStart, rangeEnd := clampRange(startIndex, endIndex, len(names))
+	total := rangeEnd - rangeStart
+	progressState := progressTracker{enabled: true, total: total, label: label}
+	processed := 0
+	sent := 0
+	skipped := 0
 	for idx, name := range names {
-		if idx < minIndex {
+		if idx < rangeStart {
 			continue
 		}
-		if endIndex > 0 && idx >= maxIndex {
+		if idx >= rangeEnd {
 			break
 		}
 		file := filesByName[name]
 		if file == nil {
+			processed++
+			skipped++
+			progressState.Print(processed, sent, skipped, false)
 			continue
 		}
 		data, err := ziputil.ReadFileWithOptions(file, zipPasswords, zipOpts)
 		if err != nil {
+			processed++
+			skipped++
+			progressState.Print(processed, sent, skipped, false)
 			continue
 		}
 		if err := sendSingleFile(client, chatID, topicID, sendType, filepath.Base(name), data, retry); err != nil {
 			log.Printf("send failed: %v", err)
+			processed++
+			skipped++
+			progressState.Print(processed, sent, skipped, false)
+		} else {
+			processed++
+			sent++
+			progressState.Print(processed, sent, skipped, false)
 		}
 		time.Sleep(delay)
 	}
+	progressState.Print(processed, sent, skipped, true)
 
 	_ = client.SendMessage(chatID, fmt.Sprintf("Completed %s upload from %s", label, filepath.Base(zipPath)), topicID, retry)
 }
