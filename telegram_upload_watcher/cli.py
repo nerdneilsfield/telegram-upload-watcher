@@ -1,14 +1,31 @@
 import argparse
 import asyncio
 import logging
+import time
+from datetime import datetime
 from pathlib import Path
 
 from .config import load_config
+from .constants import IMAGE_EXTENSIONS
 from .pools import TokenPool, UrlPool
-from .queue import JsonlQueue, QUEUE_META_TYPE, QUEUE_META_VERSION
+from .queue import JsonlQueue, QUEUE_META_TYPE, QUEUE_META_VERSION, build_source_fingerprint
 from .notify import NotifyConfig, notify_loop
-from .sender import SenderConfig, sender_loop
+from .sender import SenderConfig, drain_queue, sender_loop
 from .telegram import (
+    _allowed_exts_for_send_type,
+    _collect_files,
+    _collect_image_files,
+    _collect_source_files,
+    _format_bytes,
+    _format_duration,
+    _format_speed,
+    _format_timestamp,
+    _matches_exclude,
+    _matches_include,
+    _mixed_send_type,
+    _open_zip_with_passwords,
+    _print_summary,
+    _send_type_label,
     send_audio,
     send_document,
     send_files_from_dir,
@@ -157,6 +174,17 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Path to file with zip passwords (one per line)",
     )
+    send_images_parser.add_argument(
+        "--queue-file",
+        type=Path,
+        help="Path to JSONL queue file (enables resume mode)",
+    )
+    send_images_parser.add_argument(
+        "--queue-retries",
+        type=int,
+        default=3,
+        help="Maximum queue retry attempts per item",
+    )
 
     send_file_parser = subparsers.add_parser(
         "send-file", parents=[common], help="Send files using sendDocument"
@@ -232,6 +260,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--zip-pass-file",
         type=Path,
         help="Path to file with zip passwords (one per line)",
+    )
+    send_file_parser.add_argument(
+        "--queue-file",
+        type=Path,
+        help="Path to JSONL queue file (enables resume mode)",
+    )
+    send_file_parser.add_argument(
+        "--queue-retries",
+        type=int,
+        default=3,
+        help="Maximum queue retry attempts per item",
     )
 
     send_video_parser = subparsers.add_parser(
@@ -309,6 +348,17 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Path to file with zip passwords (one per line)",
     )
+    send_video_parser.add_argument(
+        "--queue-file",
+        type=Path,
+        help="Path to JSONL queue file (enables resume mode)",
+    )
+    send_video_parser.add_argument(
+        "--queue-retries",
+        type=int,
+        default=3,
+        help="Maximum queue retry attempts per item",
+    )
 
     send_audio_parser = subparsers.add_parser(
         "send-audio", parents=[common], help="Send audio using sendAudio"
@@ -385,6 +435,17 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Path to file with zip passwords (one per line)",
     )
+    send_audio_parser.add_argument(
+        "--queue-file",
+        type=Path,
+        help="Path to JSONL queue file (enables resume mode)",
+    )
+    send_audio_parser.add_argument(
+        "--queue-retries",
+        type=int,
+        default=3,
+        help="Maximum queue retry attempts per item",
+    )
 
     send_mixed_parser = subparsers.add_parser(
         "send-mixed", parents=[common], help="Send mixed media from files/dirs/zips"
@@ -454,6 +515,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--zip-pass-file",
         type=Path,
         help="Path to file with zip passwords (one per line)",
+    )
+    send_mixed_parser.add_argument(
+        "--queue-file",
+        type=Path,
+        help="Path to JSONL queue file (enables resume mode)",
+    )
+    send_mixed_parser.add_argument(
+        "--queue-retries",
+        type=int,
+        default=3,
+        help="Maximum queue retry attempts per item",
     )
     send_mixed_parser.add_argument(
         "--with-image",
@@ -684,6 +756,356 @@ def _load_zip_passwords(values: list[str], path: Path | None) -> list[str]:
     return passwords
 
 
+def _validate_queue_retries(value: int) -> int:
+    if value < 1:
+        raise SystemExit("--queue-retries must be >= 1")
+    return value
+
+
+def _resolve_paths(paths: list[Path]) -> list[Path]:
+    return [path.resolve() for path in paths]
+
+
+def _enqueue_file_item(
+    queue: JsonlQueue, path: Path, send_type: str
+) -> int:
+    try:
+        info = path.stat()
+    except OSError as exc:
+        logging.warning("Failed to stat %s: %s", path, exc)
+        return 0
+    mtime_ns = getattr(info, "st_mtime_ns", None)
+    source_fingerprint = build_source_fingerprint(str(path), info.st_size, mtime_ns)
+    item = queue.enqueue_item(
+        source_type="file",
+        source_path=str(path),
+        source_fingerprint=source_fingerprint,
+        path=str(path),
+        inner_path=None,
+        size=info.st_size,
+        mtime_ns=mtime_ns,
+        crc=None,
+        send_type=send_type,
+    )
+    return 1 if item else 0
+
+
+def _enqueue_zip_images(
+    queue: JsonlQueue,
+    zip_file: Path,
+    include_globs: list[str],
+    exclude_globs: list[str],
+    start_index: int,
+    end_index: int,
+    group_size: int,
+    zip_passwords: list[str],
+) -> int:
+    try:
+        zip_ref = _open_zip_with_passwords(zip_file, zip_passwords)
+    except RuntimeError as exc:
+        logging.warning("%s", exc)
+        return 0
+    try:
+        source_info = zip_file.stat()
+    except OSError as exc:
+        logging.warning("Failed to stat %s: %s", zip_file, exc)
+        zip_ref.close()
+        return 0
+
+    mtime_ns = getattr(source_info, "st_mtime_ns", None)
+    source_fingerprint = build_source_fingerprint(
+        str(zip_file), source_info.st_size, mtime_ns
+    )
+    enqueued = 0
+    with zip_ref:
+        entries = [
+            info
+            for info in zip_ref.infolist()
+            if not info.is_dir()
+            and info.filename.lower().endswith(IMAGE_EXTENSIONS)
+            and _matches_include(info.filename, include_globs)
+            and not _matches_exclude(info.filename, exclude_globs)
+        ]
+        if not entries:
+            logging.info("No images found in %s", zip_file)
+            return 0
+
+        min_index = start_index * group_size
+        max_index = end_index * group_size if end_index else None
+        selected = entries[min_index:max_index]
+        for info in selected:
+            item = queue.enqueue_item(
+                source_type="zip",
+                source_path=str(zip_file),
+                source_fingerprint=source_fingerprint,
+                path=str(zip_file),
+                inner_path=info.filename,
+                size=info.file_size,
+                mtime_ns=None,
+                crc=info.CRC,
+                send_type="image",
+            )
+            if item:
+                enqueued += 1
+    return enqueued
+
+
+def _enqueue_zip_files(
+    queue: JsonlQueue,
+    zip_file: Path,
+    send_type: str,
+    include_globs: list[str],
+    exclude_globs: list[str],
+    start_index: int,
+    end_index: int,
+    zip_passwords: list[str],
+) -> int:
+    try:
+        zip_ref = _open_zip_with_passwords(zip_file, zip_passwords)
+    except RuntimeError as exc:
+        logging.warning("%s", exc)
+        return 0
+    try:
+        source_info = zip_file.stat()
+    except OSError as exc:
+        logging.warning("Failed to stat %s: %s", zip_file, exc)
+        zip_ref.close()
+        return 0
+
+    allowed_exts = _allowed_exts_for_send_type(send_type)
+    mtime_ns = getattr(source_info, "st_mtime_ns", None)
+    source_fingerprint = build_source_fingerprint(
+        str(zip_file), source_info.st_size, mtime_ns
+    )
+    enqueued = 0
+    with zip_ref:
+        entries = [
+            info
+            for info in zip_ref.infolist()
+            if not info.is_dir()
+            and _matches_include(info.filename, include_globs)
+            and not _matches_exclude(info.filename, exclude_globs)
+            and (
+                allowed_exts is None
+                or info.filename.lower().endswith(allowed_exts)
+            )
+        ]
+        if not entries:
+            logging.info("No matching files found in %s", zip_file)
+            return 0
+
+        min_index = start_index
+        max_index = end_index if end_index else None
+        selected = entries[min_index:max_index]
+        for info in selected:
+            item = queue.enqueue_item(
+                source_type="zip",
+                source_path=str(zip_file),
+                source_fingerprint=source_fingerprint,
+                path=str(zip_file),
+                inner_path=info.filename,
+                size=info.file_size,
+                mtime_ns=None,
+                crc=info.CRC,
+                send_type=send_type,
+            )
+            if item:
+                enqueued += 1
+    return enqueued
+
+
+def _enqueue_zip_mixed(
+    queue: JsonlQueue,
+    zip_file: Path,
+    include_globs: list[str],
+    exclude_globs: list[str],
+    *,
+    with_image: bool,
+    with_video: bool,
+    with_audio: bool,
+    with_file: bool,
+    zip_passwords: list[str],
+) -> int:
+    try:
+        zip_ref = _open_zip_with_passwords(zip_file, zip_passwords)
+    except RuntimeError as exc:
+        logging.warning("%s", exc)
+        return 0
+    try:
+        source_info = zip_file.stat()
+    except OSError as exc:
+        logging.warning("Failed to stat %s: %s", zip_file, exc)
+        zip_ref.close()
+        return 0
+
+    mtime_ns = getattr(source_info, "st_mtime_ns", None)
+    source_fingerprint = build_source_fingerprint(
+        str(zip_file), source_info.st_size, mtime_ns
+    )
+    enqueued = 0
+    with zip_ref:
+        for info in zip_ref.infolist():
+            if info.is_dir():
+                continue
+            name = info.filename
+            if not _matches_include(name, include_globs):
+                continue
+            if _matches_exclude(name, exclude_globs):
+                continue
+            send_type = _mixed_send_type(
+                name,
+                with_image=with_image,
+                with_video=with_video,
+                with_audio=with_audio,
+                with_file=with_file,
+            )
+            if not send_type:
+                continue
+            item = queue.enqueue_item(
+                source_type="zip",
+                source_path=str(zip_file),
+                source_fingerprint=source_fingerprint,
+                path=str(zip_file),
+                inner_path=name,
+                size=info.file_size,
+                mtime_ns=None,
+                crc=info.CRC,
+                send_type=send_type,
+            )
+            if item:
+                enqueued += 1
+    return enqueued
+
+
+def _enqueue_images_from_dir(
+    queue: JsonlQueue,
+    image_dir: Path,
+    include_globs: list[str],
+    exclude_globs: list[str],
+    *,
+    enable_zip: bool,
+    start_index: int,
+    end_index: int,
+    group_size: int,
+    zip_passwords: list[str],
+) -> int:
+    files = _collect_image_files(
+        image_dir, include_globs, exclude_globs, enable_zip
+    )
+    if not files:
+        logging.info("No images found in %s", image_dir)
+        return 0
+
+    min_index = start_index * group_size
+    max_index = end_index * group_size if end_index else None
+    selected = files[min_index:max_index]
+    enqueued = 0
+    for path in selected:
+        if enable_zip and path.name.lower().endswith(".zip"):
+            enqueued += _enqueue_zip_images(
+                queue,
+                path,
+                include_globs,
+                exclude_globs,
+                start_index=0,
+                end_index=0,
+                group_size=group_size,
+                zip_passwords=zip_passwords,
+            )
+            continue
+        enqueued += _enqueue_file_item(queue, path, "image")
+    return enqueued
+
+
+def _enqueue_files_from_dir(
+    queue: JsonlQueue,
+    root_dir: Path,
+    send_type: str,
+    include_globs: list[str],
+    exclude_globs: list[str],
+    *,
+    enable_zip: bool,
+    start_index: int,
+    end_index: int,
+    zip_passwords: list[str],
+) -> int:
+    allowed_exts = _allowed_exts_for_send_type(send_type)
+    files = _collect_files(
+        root_dir, include_globs, exclude_globs, enable_zip, allowed_exts
+    )
+    if not files:
+        logging.info("No files found in %s", root_dir)
+        return 0
+
+    min_index = start_index
+    max_index = end_index if end_index else None
+    selected = files[min_index:max_index]
+    enqueued = 0
+    for path in selected:
+        if enable_zip and path.name.lower().endswith(".zip"):
+            enqueued += _enqueue_zip_files(
+                queue,
+                path,
+                send_type,
+                include_globs,
+                exclude_globs,
+                start_index=0,
+                end_index=0,
+                zip_passwords=zip_passwords,
+            )
+            continue
+        enqueued += _enqueue_file_item(queue, path, send_type)
+    return enqueued
+
+
+def _enqueue_mixed_from_paths(
+    queue: JsonlQueue,
+    paths: list[Path],
+    include_globs: list[str],
+    exclude_globs: list[str],
+    *,
+    with_image: bool,
+    with_video: bool,
+    with_audio: bool,
+    with_file: bool,
+    enable_zip: bool,
+    zip_passwords: list[str],
+    apply_filters: bool,
+) -> int:
+    enqueued = 0
+    for path in paths:
+        name = path.name
+        if apply_filters:
+            if include_globs and not _matches_include(name, include_globs):
+                continue
+            if _matches_exclude(name, exclude_globs):
+                continue
+        if enable_zip and name.lower().endswith(".zip"):
+            enqueued += _enqueue_zip_mixed(
+                queue,
+                path,
+                include_globs,
+                exclude_globs,
+                with_image=with_image,
+                with_video=with_video,
+                with_audio=with_audio,
+                with_file=with_file,
+                zip_passwords=zip_passwords,
+            )
+            continue
+        send_type = _mixed_send_type(
+            name,
+            with_image=with_image,
+            with_video=with_video,
+            with_audio=with_audio,
+            with_file=with_file,
+        )
+        if not send_type:
+            continue
+        enqueued += _enqueue_file_item(queue, path, send_type)
+    return enqueued
+
+
 async def run_command(args: argparse.Namespace) -> None:
     api_urls, tokens = _resolve_config(args)
     url_pool = UrlPool(api_urls)
@@ -706,6 +1128,147 @@ async def run_command(args: argparse.Namespace) -> None:
         zip_files = args.zip_file or []
         if not image_dirs and not zip_files:
             raise SystemExit("Provide --image-dir or --zip-file")
+
+        include_globs = _normalize_includes(args.include)
+        exclude_globs = _normalize_excludes(args.exclude)
+        zip_passwords = _load_zip_passwords(args.zip_pass, args.zip_pass_file)
+
+        if args.queue_file:
+            queue_retries = _validate_queue_retries(args.queue_retries)
+            resolved_dirs = _resolve_paths(image_dirs)
+            resolved_zips = _resolve_paths(zip_files)
+            meta = {
+                "type": QUEUE_META_TYPE,
+                "version": QUEUE_META_VERSION,
+                "params": {
+                    "command": "send-images",
+                    "chat_id": args.chat_id,
+                    "topic_id": args.topic_id,
+                    "dirs": [str(path) for path in resolved_dirs],
+                    "zip_files": [str(path) for path in resolved_zips],
+                    "include": include_globs,
+                    "exclude": exclude_globs,
+                    "start_index": args.start_index,
+                    "end_index": args.end_index,
+                    "group_size": args.group_size,
+                    "batch_delay": args.batch_delay,
+                    "enable_zip": args.enable_zip,
+                    "queue_retries": queue_retries,
+                    "max_retries": args.max_retries,
+                    "retry_delay": args.retry_delay,
+                    "max_dimension": args.max_dimension,
+                    "max_bytes": args.max_bytes,
+                    "png_start_level": args.png_start_level,
+                },
+            }
+            try:
+                queue = JsonlQueue(args.queue_file, meta=meta)
+            except ValueError as exc:
+                raise SystemExit(str(exc)) from exc
+
+            for image_dir in resolved_dirs:
+                if not image_dir.exists():
+                    raise SystemExit(f"Image directory not found: {image_dir}")
+                _enqueue_images_from_dir(
+                    queue,
+                    image_dir,
+                    include_globs,
+                    exclude_globs,
+                    enable_zip=args.enable_zip,
+                    start_index=args.start_index,
+                    end_index=args.end_index,
+                    group_size=args.group_size,
+                    zip_passwords=zip_passwords,
+                )
+            for zip_file in resolved_zips:
+                if not zip_file.exists():
+                    raise SystemExit(f"Zip file not found: {zip_file}")
+                _enqueue_zip_images(
+                    queue,
+                    zip_file,
+                    include_globs,
+                    exclude_globs,
+                    start_index=args.start_index,
+                    end_index=args.end_index,
+                    group_size=args.group_size,
+                    zip_passwords=zip_passwords,
+                )
+
+            pending = queue.get_pending(max_attempts=queue_retries)
+            if not pending:
+                logging.info("No queued images to send.")
+                return
+
+            started_at = datetime.now()
+            started_clock = time.monotonic()
+            await send_message(
+                url_pool,
+                token_pool,
+                args.chat_id,
+                f"Starting image upload from queue: {len(pending)} file(s) at {_format_timestamp(started_at)}",
+                topic_id=args.topic_id,
+                max_retries=args.max_retries,
+                retry_delay=args.retry_delay,
+            )
+
+            sender_config = SenderConfig(
+                chat_id=args.chat_id,
+                topic_id=args.topic_id,
+                group_size=args.group_size,
+                send_interval=0,
+                batch_delay=args.batch_delay,
+                pause_every=0,
+                pause_seconds=0,
+                max_dimension=args.max_dimension,
+                max_bytes=args.max_bytes,
+                png_start_level=args.png_start_level,
+                max_retries=args.max_retries,
+                retry_delay=args.retry_delay,
+            )
+            sent, skipped, sent_bytes = await drain_queue(
+                sender_config,
+                queue,
+                url_pool,
+                token_pool,
+                zip_passwords=zip_passwords,
+                queue_retries=queue_retries,
+                progress=not args.no_progress,
+            )
+
+            finished_at = datetime.now()
+            elapsed_seconds = time.monotonic() - started_clock
+            avg_seconds = elapsed_seconds / sent if sent > 0 else 0.0
+            await send_message(
+                url_pool,
+                token_pool,
+                args.chat_id,
+                "Completed image upload from %s at %s (elapsed %s, avg/image %s, total %s, avg %s, sent %d, skipped %d)"
+                % (
+                    args.queue_file,
+                    _format_timestamp(finished_at),
+                    _format_duration(elapsed_seconds),
+                    _format_duration(avg_seconds),
+                    _format_bytes(sent_bytes),
+                    _format_speed(sent_bytes, elapsed_seconds),
+                    sent,
+                    skipped,
+                ),
+                topic_id=args.topic_id,
+                max_retries=args.max_retries,
+                retry_delay=args.retry_delay,
+            )
+            _print_summary(
+                "image",
+                str(args.queue_file),
+                started_at,
+                finished_at,
+                elapsed_seconds,
+                sent,
+                skipped,
+                sent_bytes,
+            )
+            return
+
         for image_dir in image_dirs:
             if not image_dir.exists():
                 raise SystemExit(f"Image directory not found: {image_dir}")
@@ -720,10 +1283,10 @@ async def run_command(args: argparse.Namespace) -> None:
                 end_index=args.end_index,
                 batch_delay=args.batch_delay,
                 progress=not args.no_progress,
-                include_globs=_normalize_includes(args.include),
-                exclude_globs=_normalize_excludes(args.exclude),
+                include_globs=include_globs,
+                exclude_globs=exclude_globs,
                 enable_zip=args.enable_zip,
-                zip_passwords=_load_zip_passwords(args.zip_pass, args.zip_pass_file),
+                zip_passwords=zip_passwords,
                 max_retries=args.max_retries,
                 retry_delay=args.retry_delay,
             )
@@ -741,9 +1304,9 @@ async def run_command(args: argparse.Namespace) -> None:
                 end_index=args.end_index,
                 batch_delay=args.batch_delay,
                 progress=not args.no_progress,
-                include_globs=_normalize_includes(args.include),
-                exclude_globs=_normalize_excludes(args.exclude),
-                zip_passwords=_load_zip_passwords(args.zip_pass, args.zip_pass_file),
+                include_globs=include_globs,
+                exclude_globs=exclude_globs,
+                zip_passwords=zip_passwords,
                 max_retries=args.max_retries,
                 retry_delay=args.retry_delay,
             )
@@ -760,7 +1323,151 @@ async def run_command(args: argparse.Namespace) -> None:
             "send-video": "video",
             "send-audio": "audio",
         }[args.command]
+        include_globs = _normalize_includes(args.include)
+        exclude_globs = _normalize_excludes(args.exclude)
         zip_passwords = _load_zip_passwords(args.zip_pass, args.zip_pass_file)
+
+        if args.queue_file:
+            queue_retries = _validate_queue_retries(args.queue_retries)
+            resolved_files = _resolve_paths(file_paths)
+            resolved_dirs = _resolve_paths(dir_paths)
+            resolved_zips = _resolve_paths(zip_files)
+            meta = {
+                "type": QUEUE_META_TYPE,
+                "version": QUEUE_META_VERSION,
+                "params": {
+                    "command": args.command,
+                    "chat_id": args.chat_id,
+                    "topic_id": args.topic_id,
+                    "files": [str(path) for path in resolved_files],
+                    "dirs": [str(path) for path in resolved_dirs],
+                    "zip_files": [str(path) for path in resolved_zips],
+                    "include": include_globs,
+                    "exclude": exclude_globs,
+                    "start_index": args.start_index,
+                    "end_index": args.end_index,
+                    "batch_delay": args.batch_delay,
+                    "enable_zip": args.enable_zip,
+                    "queue_retries": queue_retries,
+                    "max_retries": args.max_retries,
+                    "retry_delay": args.retry_delay,
+                },
+            }
+            try:
+                queue = JsonlQueue(args.queue_file, meta=meta)
+            except ValueError as exc:
+                raise SystemExit(str(exc)) from exc
+
+            for file_path in resolved_files:
+                if not file_path.exists():
+                    raise SystemExit(f"File not found: {file_path}")
+                _enqueue_file_item(queue, file_path, send_type)
+            for dir_path in resolved_dirs:
+                if not dir_path.exists():
+                    raise SystemExit(f"Directory not found: {dir_path}")
+                _enqueue_files_from_dir(
+                    queue,
+                    dir_path,
+                    send_type,
+                    include_globs,
+                    exclude_globs,
+                    enable_zip=args.enable_zip,
+                    start_index=args.start_index,
+                    end_index=args.end_index,
+                    zip_passwords=zip_passwords,
+                )
+            for zip_file in resolved_zips:
+                if not zip_file.exists():
+                    raise SystemExit(f"Zip file not found: {zip_file}")
+                _enqueue_zip_files(
+                    queue,
+                    zip_file,
+                    send_type,
+                    include_globs,
+                    exclude_globs,
+                    start_index=args.start_index,
+                    end_index=args.end_index,
+                    zip_passwords=zip_passwords,
+                )
+
+            pending = queue.get_pending(max_attempts=queue_retries)
+            if not pending:
+                logging.info("No queued files to send.")
+                return
+
+            label = _send_type_label(send_type)
+            started_at = datetime.now()
+            started_clock = time.monotonic()
+            await send_message(
+                url_pool,
+                token_pool,
+                args.chat_id,
+                f"Starting {label} upload from queue: {len(pending)} file(s) at {_format_timestamp(started_at)}",
+                topic_id=args.topic_id,
+                max_retries=args.max_retries,
+                retry_delay=args.retry_delay,
+            )
+
+            sender_config = SenderConfig(
+                chat_id=args.chat_id,
+                topic_id=args.topic_id,
+                group_size=1,
+                send_interval=0,
+                batch_delay=args.batch_delay,
+                pause_every=0,
+                pause_seconds=0,
+                max_dimension=0,
+                max_bytes=0,
+                png_start_level=0,
+                max_retries=args.max_retries,
+                retry_delay=args.retry_delay,
+            )
+            sent, skipped, sent_bytes = await drain_queue(
+                sender_config,
+                queue,
+                url_pool,
+                token_pool,
+                zip_passwords=zip_passwords,
+                queue_retries=queue_retries,
+                progress=not args.no_progress,
+            )
+
+            finished_at = datetime.now()
+            elapsed_seconds = time.monotonic() - started_clock
+            avg_seconds = elapsed_seconds / sent if sent > 0 else 0.0
+            await send_message(
+                url_pool,
+                token_pool,
+                args.chat_id,
+                "Completed %s upload from %s at %s (elapsed %s, avg/%s %s, total %s, avg %s, sent %d, skipped %d)"
+                % (
+                    label,
+                    args.queue_file,
+                    _format_timestamp(finished_at),
+                    _format_duration(elapsed_seconds),
+                    label,
+                    _format_duration(avg_seconds),
+                    _format_bytes(sent_bytes),
+                    _format_speed(sent_bytes, elapsed_seconds),
+                    sent,
+                    skipped,
+                ),
+                topic_id=args.topic_id,
+                max_retries=args.max_retries,
+                retry_delay=args.retry_delay,
+            )
+            _print_summary(
+                label,
+                str(args.queue_file),
+                started_at,
+                finished_at,
+                elapsed_seconds,
+                sent,
+                skipped,
+                sent_bytes,
+            )
+            return
+
         for file_path in file_paths:
             if not file_path.exists():
                 raise SystemExit(f"File not found: {file_path}")
@@ -812,8 +1519,8 @@ async def run_command(args: argparse.Namespace) -> None:
                 end_index=args.end_index,
                 batch_delay=args.batch_delay,
                 progress=not args.no_progress,
-                include_globs=_normalize_includes(args.include),
-                exclude_globs=_normalize_excludes(args.exclude),
+                include_globs=include_globs,
+                exclude_globs=exclude_globs,
                 enable_zip=args.enable_zip,
                 zip_passwords=zip_passwords,
                 max_retries=args.max_retries,
@@ -833,8 +1540,8 @@ async def run_command(args: argparse.Namespace) -> None:
                 end_index=args.end_index,
                 batch_delay=args.batch_delay,
                 progress=not args.no_progress,
-                include_globs=_normalize_includes(args.include),
-                exclude_globs=_normalize_excludes(args.exclude),
+                include_globs=include_globs,
+                exclude_globs=exclude_globs,
                 zip_passwords=zip_passwords,
                 max_retries=args.max_retries,
                 retry_delay=args.retry_delay,
@@ -861,6 +1568,171 @@ async def run_command(args: argparse.Namespace) -> None:
         zip_passwords = _load_zip_passwords(args.zip_pass, args.zip_pass_file)
         include_globs = _normalize_includes(args.include)
         exclude_globs = _normalize_excludes(args.exclude)
+
+        if args.queue_file:
+            queue_retries = _validate_queue_retries(args.queue_retries)
+            resolved_files = _resolve_paths(file_paths)
+            resolved_dirs = _resolve_paths(dir_paths)
+            resolved_zips = _resolve_paths(zip_files)
+            meta = {
+                "type": QUEUE_META_TYPE,
+                "version": QUEUE_META_VERSION,
+                "params": {
+                    "command": "send-mixed",
+                    "chat_id": args.chat_id,
+                    "topic_id": args.topic_id,
+                    "files": [str(path) for path in resolved_files],
+                    "dirs": [str(path) for path in resolved_dirs],
+                    "zip_files": [str(path) for path in resolved_zips],
+                    "include": include_globs,
+                    "exclude": exclude_globs,
+                    "group_size": args.group_size,
+                    "batch_delay": args.batch_delay,
+                    "enable_zip": args.enable_zip,
+                    "with_image": with_image,
+                    "with_video": with_video,
+                    "with_audio": with_audio,
+                    "with_file": with_file,
+                    "queue_retries": queue_retries,
+                    "max_retries": args.max_retries,
+                    "retry_delay": args.retry_delay,
+                    "max_dimension": args.max_dimension,
+                    "max_bytes": args.max_bytes,
+                    "png_start_level": args.png_start_level,
+                },
+            }
+            try:
+                queue = JsonlQueue(args.queue_file, meta=meta)
+            except ValueError as exc:
+                raise SystemExit(str(exc)) from exc
+
+            if resolved_files:
+                for file_path in resolved_files:
+                    if not file_path.exists():
+                        raise SystemExit(f"File not found: {file_path}")
+                _enqueue_mixed_from_paths(
+                    queue,
+                    resolved_files,
+                    include_globs,
+                    exclude_globs,
+                    with_image=with_image,
+                    with_video=with_video,
+                    with_audio=with_audio,
+                    with_file=with_file,
+                    enable_zip=args.enable_zip,
+                    zip_passwords=zip_passwords,
+                    apply_filters=True,
+                )
+
+            for dir_path in resolved_dirs:
+                if not dir_path.exists():
+                    raise SystemExit(f"Directory not found: {dir_path}")
+                dir_files = _collect_source_files(
+                    dir_path, include_globs, exclude_globs
+                )
+                _enqueue_mixed_from_paths(
+                    queue,
+                    dir_files,
+                    include_globs,
+                    exclude_globs,
+                    with_image=with_image,
+                    with_video=with_video,
+                    with_audio=with_audio,
+                    with_file=with_file,
+                    enable_zip=args.enable_zip,
+                    zip_passwords=zip_passwords,
+                    apply_filters=False,
+                )
+
+            for zip_file in resolved_zips:
+                if not zip_file.exists():
+                    raise SystemExit(f"Zip file not found: {zip_file}")
+                _enqueue_zip_mixed(
+                    queue,
+                    zip_file,
+                    include_globs,
+                    exclude_globs,
+                    with_image=with_image,
+                    with_video=with_video,
+                    with_audio=with_audio,
+                    with_file=with_file,
+                    zip_passwords=zip_passwords,
+                )
+
+            pending = queue.get_pending(max_attempts=queue_retries)
+            if not pending:
+                logging.info("No queued items to send.")
+                return
+
+            started_at = datetime.now()
+            started_clock = time.monotonic()
+            await send_message(
+                url_pool,
+                token_pool,
+                args.chat_id,
+                f"Starting mixed upload from queue: {len(pending)} file(s) at {_format_timestamp(started_at)}",
+                topic_id=args.topic_id,
+                max_retries=args.max_retries,
+                retry_delay=args.retry_delay,
+            )
+
+            sender_config = SenderConfig(
+                chat_id=args.chat_id,
+                topic_id=args.topic_id,
+                group_size=args.group_size,
+                send_interval=0,
+                batch_delay=args.batch_delay,
+                pause_every=0,
+                pause_seconds=0,
+                max_dimension=args.max_dimension,
+                max_bytes=args.max_bytes,
+                png_start_level=args.png_start_level,
+                max_retries=args.max_retries,
+                retry_delay=args.retry_delay,
+            )
+            sent, skipped, sent_bytes = await drain_queue(
+                sender_config,
+                queue,
+                url_pool,
+                token_pool,
+                zip_passwords=zip_passwords,
+                queue_retries=queue_retries,
+                progress=not args.no_progress,
+            )
+
+            finished_at = datetime.now()
+            elapsed_seconds = time.monotonic() - started_clock
+            avg_seconds = elapsed_seconds / sent if sent > 0 else 0.0
+            await send_message(
+                url_pool,
+                token_pool,
+                args.chat_id,
+                "Completed mixed upload from %s at %s (elapsed %s, avg/item %s, total %s, avg %s, sent %d, skipped %d)"
+                % (
+                    args.queue_file,
+                    _format_timestamp(finished_at),
+                    _format_duration(elapsed_seconds),
+                    _format_duration(avg_seconds),
+                    _format_bytes(sent_bytes),
+                    _format_speed(sent_bytes, elapsed_seconds),
+                    sent,
+                    skipped,
+                ),
+                topic_id=args.topic_id,
+                max_retries=args.max_retries,
+                retry_delay=args.retry_delay,
+            )
+            _print_summary(
+                "mixed",
+                str(args.queue_file),
+                started_at,
+                finished_at,
+                elapsed_seconds,
+                sent,
+                skipped,
+                sent_bytes,
+            )
+            return
 
         if file_paths:
             for file_path in file_paths:
@@ -1009,6 +1881,8 @@ async def run_command(args: argparse.Namespace) -> None:
             max_dimension=args.max_dimension,
             max_bytes=args.max_bytes,
             png_start_level=args.png_start_level,
+            max_retries=args.max_retries,
+            retry_delay=args.retry_delay,
         )
         notify_config = NotifyConfig(
             enabled=args.notify,

@@ -73,17 +73,32 @@ func (w *WatchDirs) UnmarshalJSON(data []byte) error {
 }
 
 type MetaParams struct {
-	Command   string    `json:"command"`
-	WatchDir  WatchDirs `json:"watch_dir"`
-	Recursive bool      `json:"recursive"`
-	ChatID    string    `json:"chat_id"`
-	TopicID   *int      `json:"topic_id,omitempty"`
-	WithImage bool      `json:"with_image"`
-	WithVideo bool      `json:"with_video"`
-	WithAudio bool      `json:"with_audio"`
-	WithAll   bool      `json:"with_all"`
-	Include   []string  `json:"include,omitempty"`
-	Exclude   []string  `json:"exclude,omitempty"`
+	Command       string    `json:"command"`
+	WatchDir      WatchDirs `json:"watch_dir,omitempty"`
+	Recursive     bool      `json:"recursive,omitempty"`
+	ChatID        string    `json:"chat_id"`
+	TopicID       *int      `json:"topic_id,omitempty"`
+	WithImage     bool      `json:"with_image,omitempty"`
+	WithVideo     bool      `json:"with_video,omitempty"`
+	WithAudio     bool      `json:"with_audio,omitempty"`
+	WithFile      bool      `json:"with_file,omitempty"`
+	WithAll       bool      `json:"with_all,omitempty"`
+	Include       []string  `json:"include,omitempty"`
+	Exclude       []string  `json:"exclude,omitempty"`
+	Files         []string  `json:"files,omitempty"`
+	Dirs          []string  `json:"dirs,omitempty"`
+	ZipFiles      []string  `json:"zip_files,omitempty"`
+	StartIndex    int       `json:"start_index,omitempty"`
+	EndIndex      int       `json:"end_index,omitempty"`
+	GroupSize     int       `json:"group_size,omitempty"`
+	BatchDelay    int       `json:"batch_delay,omitempty"`
+	EnableZip     bool      `json:"enable_zip,omitempty"`
+	QueueRetries  int       `json:"queue_retries,omitempty"`
+	MaxRetries    int       `json:"max_retries,omitempty"`
+	RetryDelay    int       `json:"retry_delay,omitempty"`
+	MaxDimension  int       `json:"max_dimension,omitempty"`
+	MaxBytes      int       `json:"max_bytes,omitempty"`
+	PNGStartLevel int       `json:"png_start_level,omitempty"`
 }
 
 type Item struct {
@@ -101,6 +116,7 @@ type Item struct {
 	Status            string  `json:"status"`
 	EnqueuedAt        string  `json:"enqueued_at"`
 	UpdatedAt         string  `json:"updated_at"`
+	Attempts          int     `json:"attempts"`
 	Error             *string `json:"error,omitempty"`
 }
 
@@ -165,8 +181,14 @@ func normalizeMeta(meta *Meta) *Meta {
 	copyMeta.Params.WatchDir = normalizeWatchDirs(meta.Params.WatchDir)
 	copyMeta.Params.Include = append([]string{}, meta.Params.Include...)
 	copyMeta.Params.Exclude = append([]string{}, meta.Params.Exclude...)
+	copyMeta.Params.Files = append([]string{}, meta.Params.Files...)
+	copyMeta.Params.Dirs = append([]string{}, meta.Params.Dirs...)
+	copyMeta.Params.ZipFiles = append([]string{}, meta.Params.ZipFiles...)
 	sort.Strings(copyMeta.Params.Include)
 	sort.Strings(copyMeta.Params.Exclude)
+	sort.Strings(copyMeta.Params.Files)
+	sort.Strings(copyMeta.Params.Dirs)
+	sort.Strings(copyMeta.Params.ZipFiles)
 	return &copyMeta
 }
 
@@ -400,6 +422,7 @@ func (q *Queue) Enqueue(item Item) (*Item, error) {
 	item.Status = StatusQueued
 	item.EnqueuedAt = now
 	item.UpdatedAt = now
+	item.Attempts = 0
 
 	q.items[item.ID] = &item
 	q.fingerprintIndex[item.Fingerprint] = item.ID
@@ -410,11 +433,18 @@ func (q *Queue) Enqueue(item Item) (*Item, error) {
 }
 
 func (q *Queue) UpdateStatus(id string, status string, errMsg *string) error {
+	return q.UpdateStatusWithAttempts(id, status, errMsg, nil)
+}
+
+func (q *Queue) UpdateStatusWithAttempts(id string, status string, errMsg *string, attempts *int) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	item, ok := q.items[id]
 	if !ok {
 		return errors.New("queue item not found")
+	}
+	if attempts != nil {
+		item.Attempts = *attempts
 	}
 	item.Status = status
 	item.UpdatedAt = nowUTC()
@@ -431,6 +461,28 @@ func (q *Queue) Pending(limit int) []*Item {
 		if pendingStatuses[item.Status] {
 			pending = append(pending, item)
 		}
+	}
+	sort.Slice(pending, func(i, j int) bool {
+		return pending[i].EnqueuedAt < pending[j].EnqueuedAt
+	})
+	if limit > 0 && len(pending) > limit {
+		return pending[:limit]
+	}
+	return pending
+}
+
+func (q *Queue) PendingWithAttempts(limit int, maxAttempts int) []*Item {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	pending := []*Item{}
+	for _, item := range q.items {
+		if !pendingStatuses[item.Status] {
+			continue
+		}
+		if maxAttempts > 0 && item.Attempts >= maxAttempts {
+			continue
+		}
+		pending = append(pending, item)
 	}
 	sort.Slice(pending, func(i, j int) bool {
 		return pending[i].EnqueuedAt < pending[j].EnqueuedAt

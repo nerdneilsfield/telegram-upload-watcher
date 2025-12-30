@@ -37,6 +37,7 @@ class QueueItem:
     updated_at: str
     send_type: str = "image"
     error: str | None = None
+    attempts: int = 0
 
 
 def _utc_now() -> str:
@@ -244,21 +245,33 @@ class JsonlQueue:
         self._append(item)
         return item
 
-    def update_status(self, item_id: str, status: str, error: str | None = None) -> None:
+    def update_status(
+        self,
+        item_id: str,
+        status: str,
+        error: str | None = None,
+        attempts: int | None = None,
+    ) -> None:
         item = self.items.get(item_id)
         if not item:
             raise KeyError(f"Queue item not found: {item_id}")
         item.status = status
         item.updated_at = _utc_now()
         item.error = error
+        if attempts is not None:
+            item.attempts = attempts
         self._append(item)
 
-    def get_pending(self, limit: int | None = None) -> list[QueueItem]:
+    def get_pending(
+        self, limit: int | None = None, max_attempts: int | None = None
+    ) -> list[QueueItem]:
         pending = [
             item
             for item in self.items.values()
             if item.status in PENDING_STATUSES
         ]
+        if max_attempts is not None:
+            pending = [item for item in pending if item.attempts < max_attempts]
         pending.sort(key=lambda entry: entry.enqueued_at)
         if limit is not None:
             return pending[:limit]

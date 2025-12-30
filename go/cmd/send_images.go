@@ -11,6 +11,7 @@ import (
 	"time"
 
 	imageutil "github.com/nerdneilsfield/telegram-upload-watcher/go/internal/image"
+	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/queue"
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/telegram"
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/ziputil"
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/pkgs/constants"
@@ -34,6 +35,8 @@ func newSendImagesCmd() *cobra.Command {
 	var maxDimension int
 	var maxBytes int
 	var pngStartLevel int
+	var queueFile string
+	var queueRetries int
 
 	cmd := &cobra.Command{
 		Use:          "send-images",
@@ -61,6 +64,115 @@ func newSendImagesCmd() *cobra.Command {
 			zipPasswords, err := loadZipPasswords(zipPasses.Values(), zipPassFile)
 			if err != nil {
 				return err
+			}
+
+			if queueFile != "" {
+				queueRetries, err = validateQueueRetries(queueRetries)
+				if err != nil {
+					return err
+				}
+				resolvedDirs, err := resolveAbsPaths(imageDirs.Values())
+				if err != nil {
+					return err
+				}
+				resolvedZips, err := resolveAbsPaths(zipFiles.Values())
+				if err != nil {
+					return err
+				}
+				meta := &queue.Meta{
+					Params: queue.MetaParams{
+						Command:       "send-images",
+						ChatID:        cfg.chatID,
+						TopicID:       topicPtr(cfg),
+						Dirs:          resolvedDirs,
+						ZipFiles:      resolvedZips,
+						Include:       includes.Values(),
+						Exclude:       excludes.Values(),
+						StartIndex:    startIndex,
+						EndIndex:      endIndex,
+						GroupSize:     groupSize,
+						BatchDelay:    batchDelay,
+						EnableZip:     enableZip,
+						QueueRetries:  queueRetries,
+						MaxRetries:    cfg.maxRetries,
+						RetryDelay:    cfg.retryDelaySec,
+						MaxDimension:  maxDimension,
+						MaxBytes:      maxBytes,
+						PNGStartLevel: pngStartLevel,
+					},
+				}
+				q, err := queue.New(queueFile, meta)
+				if err != nil {
+					return err
+				}
+				defer q.Close()
+
+				for _, imageDir := range resolvedDirs {
+					if _, err := os.Stat(imageDir); err != nil {
+						return err
+					}
+					enqueueImagesFromDir(q, imageDir, includes.Values(), excludes.Values(), enableZip, startIndex, endIndex, groupSize, zipPasswords)
+				}
+				for _, zipFile := range resolvedZips {
+					if _, err := os.Stat(zipFile); err != nil {
+						return err
+					}
+					enqueueZipImages(q, zipFile, includes.Values(), excludes.Values(), startIndex, endIndex, groupSize, zipPasswords)
+				}
+
+				pending := q.PendingWithAttempts(0, queueRetries)
+				if len(pending) == 0 {
+					log.Printf("no queued images to send")
+					return nil
+				}
+
+				startedAt := time.Now()
+				retry := telegram.RetryConfig{MaxRetries: cfg.maxRetries, Delay: cfg.retryDelay}
+				_ = client.SendMessage(
+					cfg.chatID,
+					fmt.Sprintf("Starting image upload from queue: %d file(s) at %s", len(pending), formatTimestamp(startedAt)),
+					topicPtr(cfg),
+					retry,
+				)
+
+				sent, skipped, sentBytes := drainQueue(client, q, "image", queueSendConfig{
+					chatID:          cfg.chatID,
+					topicID:         topicPtr(cfg),
+					groupSize:       groupSize,
+					batchDelay:      time.Duration(batchDelay) * time.Second,
+					maxDimension:    maxDimension,
+					maxBytes:        maxBytes,
+					pngStartLevel:   pngStartLevel,
+					retry:           retry,
+					zipPasswords:    zipPasswords,
+					logZipPasswords: logZipPasswords,
+					queueRetries:    queueRetries,
+				})
+
+				finishedAt := time.Now()
+				elapsed := finishedAt.Sub(startedAt)
+				avgPer := time.Duration(0)
+				if sent > 0 {
+					avgPer = elapsed / time.Duration(sent)
+				}
+				_ = client.SendMessage(
+					cfg.chatID,
+					fmt.Sprintf(
+						"Completed image upload from %s at %s (elapsed %s, avg/image %s, total %s, avg %s, sent %d, skipped %d)",
+						queueFile,
+						formatTimestamp(finishedAt),
+						formatDuration(elapsed),
+						formatDuration(avgPer),
+						formatBytes(sentBytes),
+						formatSpeed(sentBytes, elapsed),
+						sent,
+						skipped,
+					),
+					topicPtr(cfg),
+					retry,
+				)
+				printSummary("image", queueFile, startedAt, finishedAt, elapsed, sent, skipped, sentBytes)
+				return nil
 			}
 
 			retry := telegram.RetryConfig{MaxRetries: cfg.maxRetries, Delay: cfg.retryDelay}
@@ -126,6 +238,8 @@ func newSendImagesCmd() *cobra.Command {
 	flags.IntVar(&maxDimension, "max-dimension", 2000, "Max image dimension (0 to disable resize)")
 	flags.IntVar(&maxBytes, "max-bytes", 5*1024*1024, "Max image size in bytes (0 to disable size limit)")
 	flags.IntVar(&pngStartLevel, "png-start-level", 8, "PNG compression start level (0-9)")
+	flags.StringVar(&queueFile, "queue-file", "", "Path to JSONL queue file (enables resume mode)")
+	flags.IntVar(&queueRetries, "queue-retries", 3, "Maximum queue retry attempts per item")
 	return cmd
 }
 

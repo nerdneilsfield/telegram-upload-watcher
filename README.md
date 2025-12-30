@@ -154,6 +154,16 @@ $CLI send-images \
   --config ./config.example.ini
 ```
 
+Queue-backed send (resume) / 可恢复发送:
+```bash
+$CLI send-images \
+  --chat-id "-1001234567890" \
+  --image-dir /path/to/images \
+  --queue-file ./send-images.queue.jsonl \
+  --queue-retries 3 \
+  --config ./config.example.ini
+```
+
 Watch folder / 监控文件夹:
 ```bash
 $CLI watch \
@@ -242,6 +252,7 @@ Useful options / 常用参数:
 - `--scan-interval 30` scan interval seconds / 扫描间隔秒
 - `--send-interval 30` send interval seconds / 发送间隔秒
 - `--queue-file queue.jsonl` queue persistence file / 队列持久化文件
+- `--queue-retries 3` max queue retry attempts per item / 队列单项重试上限
 - `--settle-seconds 5` wait for file stability / 文件稳定等待
 - `--pause-every 100` pause after N images / 每发送 N 张暂停
 - `--pause-seconds 60` pause duration / 暂停时长
@@ -254,8 +265,8 @@ Useful options / 常用参数:
 Note / 说明:
 `--zip-pass` and `--zip-pass-file` apply to encrypted zips found by `--enable-zip` and watch mode too.
 `--zip-pass` 和 `--zip-pass-file` 也适用于 `--enable-zip` 或 watch 扫描到的加密 zip。
-The queue file writes a metadata header on the first line (watch dir/chat/topic/include/exclude/types). Reusing the same queue with different parameters exits with an error; use a new `--queue-file` or delete the old queue.
-队列文件首行会写入运行参数元数据（监控路径/聊天/topic/过滤/类型）。使用不同参数复用同一个队列会报错退出；请改用新的 `--queue-file` 或删除旧队列。
+The queue file writes a metadata header on the first line (command/inputs/chat/topic/filters/types). Reusing the same queue with different parameters exits with an error; use a new `--queue-file` or delete the old queue.
+队列文件首行会写入运行参数元数据（命令/路径/聊天/topic/过滤/类型）。使用不同参数复用同一个队列会报错退出；请改用新的 `--queue-file` 或删除旧队列。
 
 Filtering rules / 过滤规则:
 - If `--include` is empty, everything is included by default.

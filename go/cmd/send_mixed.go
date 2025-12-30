@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/queue"
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/telegram"
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/ziputil"
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/pkgs/constants"
@@ -76,6 +77,8 @@ func newSendMixedCmd() *cobra.Command {
 	var withVideo bool
 	var withAudio bool
 	var withFile bool
+	var queueFile string
+	var queueRetries int
 
 	cmd := &cobra.Command{
 		Use:          "send-mixed",
@@ -106,6 +109,130 @@ func newSendMixedCmd() *cobra.Command {
 			}
 			selection := resolveMixedSelection(withImage, withVideo, withAudio, withFile)
 			retry := telegram.RetryConfig{MaxRetries: cfg.maxRetries, Delay: cfg.retryDelay}
+
+			if queueFile != "" {
+				queueRetries, err = validateQueueRetries(queueRetries)
+				if err != nil {
+					return err
+				}
+				resolvedFiles, err := resolveAbsPaths(filePaths.Values())
+				if err != nil {
+					return err
+				}
+				resolvedDirs, err := resolveAbsPaths(dirPaths.Values())
+				if err != nil {
+					return err
+				}
+				resolvedZips, err := resolveAbsPaths(zipPaths.Values())
+				if err != nil {
+					return err
+				}
+				meta := &queue.Meta{
+					Params: queue.MetaParams{
+						Command:       "send-mixed",
+						ChatID:        cfg.chatID,
+						TopicID:       topicPtr(cfg),
+						Files:         resolvedFiles,
+						Dirs:          resolvedDirs,
+						ZipFiles:      resolvedZips,
+						Include:       includes.Values(),
+						Exclude:       excludes.Values(),
+						GroupSize:     groupSize,
+						BatchDelay:    batchDelay,
+						EnableZip:     enableZip,
+						WithImage:     selection.withImage,
+						WithVideo:     selection.withVideo,
+						WithAudio:     selection.withAudio,
+						WithFile:      selection.withFile,
+						QueueRetries:  queueRetries,
+						MaxRetries:    cfg.maxRetries,
+						RetryDelay:    cfg.retryDelaySec,
+						MaxDimension:  maxDimension,
+						MaxBytes:      maxBytes,
+						PNGStartLevel: pngStartLevel,
+					},
+				}
+				q, err := queue.New(queueFile, meta)
+				if err != nil {
+					return err
+				}
+				defer q.Close()
+
+				if len(resolvedFiles) > 0 {
+					for _, filePath := range resolvedFiles {
+						if _, err := os.Stat(filePath); err != nil {
+							return err
+						}
+					}
+					enqueueMixedFromPaths(q, resolvedFiles, selection, includes.Values(), excludes.Values(), true, enableZip, zipPasswords)
+				}
+				for _, dirPath := range resolvedDirs {
+					if _, err := os.Stat(dirPath); err != nil {
+						return err
+					}
+					files := collectSourceFiles(dirPath, includes.Values(), excludes.Values())
+					enqueueMixedFromPaths(q, files, selection, includes.Values(), excludes.Values(), false, enableZip, zipPasswords)
+				}
+				for _, zipPath := range resolvedZips {
+					if _, err := os.Stat(zipPath); err != nil {
+						return err
+					}
+					enqueueZipMixed(q, zipPath, selection, includes.Values(), excludes.Values(), zipPasswords)
+				}
+
+				pending := q.PendingWithAttempts(0, queueRetries)
+				if len(pending) == 0 {
+					log.Printf("no queued items to send")
+					return nil
+				}
+
+				startedAt := time.Now()
+				_ = client.SendMessage(
+					cfg.chatID,
+					fmt.Sprintf("Starting mixed upload from queue: %d file(s) at %s", len(pending), formatTimestamp(startedAt)),
+					topicPtr(cfg),
+					retry,
+				)
+
+				sent, skipped, sentBytes := drainQueue(client, q, "mixed", queueSendConfig{
+					chatID:          cfg.chatID,
+					topicID:         topicPtr(cfg),
+					groupSize:       groupSize,
+					batchDelay:      time.Duration(batchDelay) * time.Second,
+					maxDimension:    maxDimension,
+					maxBytes:        maxBytes,
+					pngStartLevel:   pngStartLevel,
+					retry:           retry,
+					zipPasswords:    zipPasswords,
+					logZipPasswords: logZipPasswords,
+					queueRetries:    queueRetries,
+				})
+
+				finishedAt := time.Now()
+				elapsed := finishedAt.Sub(startedAt)
+				avgPer := time.Duration(0)
+				if sent > 0 {
+					avgPer = elapsed / time.Duration(sent)
+				}
+				_ = client.SendMessage(
+					cfg.chatID,
+					fmt.Sprintf(
+						"Completed mixed upload from %s at %s (elapsed %s, avg/item %s, total %s, avg %s, sent %d, skipped %d)",
+						queueFile,
+						formatTimestamp(finishedAt),
+						formatDuration(elapsed),
+						formatDuration(avgPer),
+						formatBytes(sentBytes),
+						formatSpeed(sentBytes, elapsed),
+						sent,
+						skipped,
+					),
+					topicPtr(cfg),
+					retry,
+				)
+				printSummary("mixed", queueFile, startedAt, finishedAt, elapsed, sent, skipped, sentBytes)
+				return nil
+			}
 
 			if len(filePaths.Values()) > 0 {
 				sendMixedFromPaths(
@@ -192,6 +319,8 @@ func newSendMixedCmd() *cobra.Command {
 	flags.BoolVar(&withVideo, "with-video", false, "Send matching videos")
 	flags.BoolVar(&withAudio, "with-audio", false, "Send matching audio files")
 	flags.BoolVar(&withFile, "with-file", false, "Send other files as documents")
+	flags.StringVar(&queueFile, "queue-file", "", "Path to JSONL queue file (enables resume mode)")
+	flags.IntVar(&queueRetries, "queue-retries", 3, "Maximum queue retry attempts per item")
 	return cmd
 }
 

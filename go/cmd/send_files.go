@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/queue"
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/telegram"
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/internal/ziputil"
 	"github.com/nerdneilsfield/telegram-upload-watcher/go/pkgs/constants"
@@ -41,6 +42,8 @@ func newSendFilesCmd(use string, short string, sendType string) *cobra.Command {
 	zipPasses := &stringSlice{}
 	var zipPassFile string
 	var logZipPasswords bool
+	var queueFile string
+	var queueRetries int
 
 	cmd := &cobra.Command{
 		Use:          use,
@@ -68,6 +71,124 @@ func newSendFilesCmd(use string, short string, sendType string) *cobra.Command {
 			zipPasswords, err := loadZipPasswords(zipPasses.Values(), zipPassFile)
 			if err != nil {
 				return err
+			}
+
+			if queueFile != "" {
+				queueRetries, err = validateQueueRetries(queueRetries)
+				if err != nil {
+					return err
+				}
+				resolvedFiles, err := resolveAbsPaths(filePaths.Values())
+				if err != nil {
+					return err
+				}
+				resolvedDirs, err := resolveAbsPaths(dirPaths.Values())
+				if err != nil {
+					return err
+				}
+				resolvedZips, err := resolveAbsPaths(zipPaths.Values())
+				if err != nil {
+					return err
+				}
+				meta := &queue.Meta{
+					Params: queue.MetaParams{
+						Command:      use,
+						ChatID:       cfg.chatID,
+						TopicID:      topicPtr(cfg),
+						Files:        resolvedFiles,
+						Dirs:         resolvedDirs,
+						ZipFiles:     resolvedZips,
+						Include:      includes.Values(),
+						Exclude:      excludes.Values(),
+						StartIndex:   startIndex,
+						EndIndex:     endIndex,
+						BatchDelay:   batchDelay,
+						EnableZip:    enableZip,
+						QueueRetries: queueRetries,
+						MaxRetries:   cfg.maxRetries,
+						RetryDelay:   cfg.retryDelaySec,
+					},
+				}
+				q, err := queue.New(queueFile, meta)
+				if err != nil {
+					return err
+				}
+				defer q.Close()
+
+				for _, filePath := range resolvedFiles {
+					if _, err := os.Stat(filePath); err != nil {
+						return err
+					}
+					enqueueFileItem(q, filePath, sendType)
+				}
+				for _, dirPath := range resolvedDirs {
+					if _, err := os.Stat(dirPath); err != nil {
+						return err
+					}
+					enqueueFilesFromDir(q, dirPath, sendType, includes.Values(), excludes.Values(), enableZip, startIndex, endIndex, zipPasswords)
+				}
+				for _, zipPath := range resolvedZips {
+					if _, err := os.Stat(zipPath); err != nil {
+						return err
+					}
+					enqueueZipFiles(q, zipPath, sendType, includes.Values(), excludes.Values(), startIndex, endIndex, zipPasswords)
+				}
+
+				pending := q.PendingWithAttempts(0, queueRetries)
+				if len(pending) == 0 {
+					log.Printf("no queued files to send")
+					return nil
+				}
+
+				label := sendTypeLabel(sendType)
+				startedAt := time.Now()
+				retry := telegram.RetryConfig{MaxRetries: cfg.maxRetries, Delay: cfg.retryDelay}
+				_ = client.SendMessage(
+					cfg.chatID,
+					fmt.Sprintf("Starting %s upload from queue: %d file(s) at %s", label, len(pending), formatTimestamp(startedAt)),
+					topicPtr(cfg),
+					retry,
+				)
+
+				sent, skipped, sentBytes := drainQueue(client, q, label, queueSendConfig{
+					chatID:          cfg.chatID,
+					topicID:         topicPtr(cfg),
+					groupSize:       1,
+					batchDelay:      time.Duration(batchDelay) * time.Second,
+					maxDimension:    0,
+					maxBytes:        0,
+					pngStartLevel:   0,
+					retry:           retry,
+					zipPasswords:    zipPasswords,
+					logZipPasswords: logZipPasswords,
+					queueRetries:    queueRetries,
+				})
+
+				finishedAt := time.Now()
+				elapsed := finishedAt.Sub(startedAt)
+				avgPer := time.Duration(0)
+				if sent > 0 {
+					avgPer = elapsed / time.Duration(sent)
+				}
+				_ = client.SendMessage(
+					cfg.chatID,
+					fmt.Sprintf(
+						"Completed %s upload from %s at %s (elapsed %s, avg/file %s, total %s, avg %s, sent %d, skipped %d)",
+						label,
+						queueFile,
+						formatTimestamp(finishedAt),
+						formatDuration(elapsed),
+						formatDuration(avgPer),
+						formatBytes(sentBytes),
+						formatSpeed(sentBytes, elapsed),
+						sent,
+						skipped,
+					),
+					topicPtr(cfg),
+					retry,
+				)
+				printSummary(label, queueFile, startedAt, finishedAt, elapsed, sent, skipped, sentBytes)
+				return nil
 			}
 
 			retry := telegram.RetryConfig{MaxRetries: cfg.maxRetries, Delay: cfg.retryDelay}
@@ -168,6 +289,8 @@ func newSendFilesCmd(use string, short string, sendType string) *cobra.Command {
 	flags.Var(zipPasses, "zip-pass", "Zip password (repeatable or comma-separated)")
 	flags.StringVar(&zipPassFile, "zip-pass-file", "", "Path to file with zip passwords (one per line)")
 	flags.BoolVar(&logZipPasswords, "zip-pass-log", false, "Log zip passwords while checking (use with care)")
+	flags.StringVar(&queueFile, "queue-file", "", "Path to JSONL queue file (enables resume mode)")
+	flags.IntVar(&queueRetries, "queue-retries", 3, "Maximum queue retry attempts per item")
 	return cmd
 }
 

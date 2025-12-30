@@ -219,6 +219,17 @@ func displayName(item *queue.Item) string {
 	return filepath.Base(item.Path)
 }
 
+func markFailed(q *queue.Queue, item *queue.Item, err error) {
+	if item == nil {
+		return
+	}
+	msg := err.Error()
+	attempts := item.Attempts + 1
+	if updateErr := q.UpdateStatusWithAttempts(item.ID, queue.StatusFailed, &msg, &attempts); updateErr != nil {
+		log.Printf("queue update failed: %v", updateErr)
+	}
+}
+
 func sleepWithContext(ctx context.Context, d time.Duration) bool {
 	if d <= 0 {
 		return true
@@ -243,14 +254,12 @@ func sendImageGroup(cfg Config, q *queue.Queue, client *telegram.Client, items [
 		}
 		data, filename, err := loadItem(item, cfg.ZipPasswords)
 		if err != nil {
-			msg := err.Error()
-			q.UpdateStatus(item.ID, queue.StatusFailed, &msg)
+			markFailed(q, item, err)
 			continue
 		}
 		result, err := imageutil.Prepare(data, filename, cfg.MaxDimension, cfg.MaxBytes, cfg.PNGStartLevel)
 		if err != nil {
-			msg := err.Error()
-			q.UpdateStatus(item.ID, queue.StatusFailed, &msg)
+			markFailed(q, item, err)
 			continue
 		}
 		mediaFiles = append(mediaFiles, telegram.MediaFile{Filename: result.Filename, Data: result.Data})
@@ -262,9 +271,8 @@ func sendImageGroup(cfg Config, q *queue.Queue, client *telegram.Client, items [
 	}
 
 	if err := client.SendMediaGroup(cfg.ChatID, mediaFiles, cfg.TopicID, cfg.Retry); err != nil {
-		msg := err.Error()
 		for _, item := range itemRefs {
-			q.UpdateStatus(item.ID, queue.StatusFailed, &msg)
+			markFailed(q, item, err)
 		}
 		return 0
 	}
@@ -281,8 +289,7 @@ func sendSingle(cfg Config, q *queue.Queue, client *telegram.Client, item *queue
 	}
 	data, filename, err := loadItem(item, cfg.ZipPasswords)
 	if err != nil {
-		msg := err.Error()
-		q.UpdateStatus(item.ID, queue.StatusFailed, &msg)
+		markFailed(q, item, err)
 		return 0
 	}
 
@@ -299,8 +306,7 @@ func sendSingle(cfg Config, q *queue.Queue, client *telegram.Client, item *queue
 		sendErr = fmt.Errorf("unsupported send type: %s", sendType)
 	}
 	if sendErr != nil {
-		msg := sendErr.Error()
-		q.UpdateStatus(item.ID, queue.StatusFailed, &msg)
+		markFailed(q, item, sendErr)
 		return 0
 	}
 	q.UpdateStatus(item.ID, queue.StatusSent, nil)
