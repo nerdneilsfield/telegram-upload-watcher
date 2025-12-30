@@ -111,6 +111,18 @@ $CLI send-audio \
   --config ./config.example.ini
 ```
 
+Send mixed media / 发送混合媒体:
+```bash
+$CLI send-mixed \
+  --chat-id "-1001234567890" \
+  --zip-file /path/to/archive.zip \
+  --with-image \
+  --with-video \
+  --with-audio \
+  --with-file \
+  --config ./config.example.ini
+```
+
 Send images from a zip / 发送压缩包图片:
 ```bash
 $CLI send-images \
@@ -215,6 +227,7 @@ Useful options / 常用参数:
 - `--file` file path (repeatable) / 文件路径 (可重复)
 - `--dir` directory path (repeatable) / 目录路径 (可重复)
 - `--watch-dir` watch folder (repeatable) / 监控目录 (可重复)
+- `--with-image/--with-video/--with-audio/--with-file` mixed media selectors / 混合媒体选择器
 - `--recursive` enable recursive scan / 递归扫描
 - `--include "*.jpg"` glob includes (repeatable) / 包含规则 (可重复)
 - `--exclude "*.tmp"` glob excludes (repeatable) / 排除规则 (可重复)

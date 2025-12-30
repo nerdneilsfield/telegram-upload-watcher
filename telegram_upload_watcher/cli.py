@@ -15,6 +15,9 @@ from .telegram import (
     send_files_from_zip,
     send_images_from_dir,
     send_images_from_zip,
+    send_mixed_from_dir,
+    send_mixed_from_paths,
+    send_mixed_from_zip,
     send_message,
     send_video,
     test_token,
@@ -383,6 +386,96 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to file with zip passwords (one per line)",
     )
 
+    send_mixed_parser = subparsers.add_parser(
+        "send-mixed", parents=[common], help="Send mixed media from files/dirs/zips"
+    )
+    send_mixed_parser.add_argument(
+        "--file",
+        type=Path,
+        action="append",
+        default=[],
+        help="File path (repeatable)",
+    )
+    send_mixed_parser.add_argument(
+        "--dir",
+        type=Path,
+        action="append",
+        default=[],
+        help="Directory path (repeatable)",
+    )
+    send_mixed_parser.add_argument(
+        "--zip-file",
+        type=Path,
+        action="append",
+        default=[],
+        help="Zip file path (repeatable)",
+    )
+    send_mixed_parser.add_argument(
+        "--group-size",
+        type=int,
+        default=4,
+        help="Images per media group",
+    )
+    send_mixed_parser.add_argument(
+        "--batch-delay",
+        type=int,
+        default=3,
+        help="Delay between sends in seconds",
+    )
+    send_mixed_parser.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="Disable progress output",
+    )
+    send_mixed_parser.add_argument(
+        "--enable-zip",
+        action="store_true",
+        help="Process zip files when scanning directories",
+    )
+    send_mixed_parser.add_argument(
+        "--include",
+        action="append",
+        default=[],
+        help="Glob pattern to include (repeatable or comma-separated)",
+    )
+    send_mixed_parser.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        help="Glob pattern to exclude (repeatable or comma-separated)",
+    )
+    send_mixed_parser.add_argument(
+        "--zip-pass",
+        action="append",
+        default=[],
+        help="Zip password (repeatable)",
+    )
+    send_mixed_parser.add_argument(
+        "--zip-pass-file",
+        type=Path,
+        help="Path to file with zip passwords (one per line)",
+    )
+    send_mixed_parser.add_argument(
+        "--with-image",
+        action="store_true",
+        help="Send matching images (media groups)",
+    )
+    send_mixed_parser.add_argument(
+        "--with-video",
+        action="store_true",
+        help="Send matching videos",
+    )
+    send_mixed_parser.add_argument(
+        "--with-audio",
+        action="store_true",
+        help="Send matching audio files",
+    )
+    send_mixed_parser.add_argument(
+        "--with-file",
+        action="store_true",
+        help="Send other files as documents",
+    )
+
     watch_parser = subparsers.add_parser(
         "watch", parents=[common], help="Watch folder and send queued images"
     )
@@ -743,6 +836,101 @@ async def run_command(args: argparse.Namespace) -> None:
                 include_globs=_normalize_includes(args.include),
                 exclude_globs=_normalize_excludes(args.exclude),
                 zip_passwords=zip_passwords,
+                max_retries=args.max_retries,
+                retry_delay=args.retry_delay,
+            )
+        return
+
+    if args.command == "send-mixed":
+        file_paths = args.file or []
+        dir_paths = args.dir or []
+        zip_files = args.zip_file or []
+        if not file_paths and not dir_paths and not zip_files:
+            raise SystemExit("Provide --file, --dir, or --zip-file")
+
+        with_image = args.with_image
+        with_video = args.with_video
+        with_audio = args.with_audio
+        with_file = args.with_file
+        if not any([with_image, with_video, with_audio, with_file]):
+            with_image = True
+            with_video = True
+            with_audio = True
+            with_file = True
+
+        zip_passwords = _load_zip_passwords(args.zip_pass, args.zip_pass_file)
+        include_globs = _normalize_includes(args.include)
+        exclude_globs = _normalize_excludes(args.exclude)
+
+        if file_paths:
+            for file_path in file_paths:
+                if not file_path.exists():
+                    raise SystemExit(f"File not found: {file_path}")
+            await send_mixed_from_paths(
+                url_pool,
+                token_pool,
+                args.chat_id,
+                file_paths,
+                source_label="files",
+                with_image=with_image,
+                with_video=with_video,
+                with_audio=with_audio,
+                with_file=with_file,
+                group_size=args.group_size,
+                batch_delay=args.batch_delay,
+                progress=not args.no_progress,
+                include_globs=include_globs,
+                exclude_globs=exclude_globs,
+                enable_zip=args.enable_zip,
+                zip_passwords=zip_passwords,
+                topic_id=args.topic_id,
+                max_retries=args.max_retries,
+                retry_delay=args.retry_delay,
+            )
+
+        for dir_path in dir_paths:
+            if not dir_path.exists():
+                raise SystemExit(f"Directory not found: {dir_path}")
+            await send_mixed_from_dir(
+                url_pool,
+                token_pool,
+                args.chat_id,
+                dir_path,
+                with_image=with_image,
+                with_video=with_video,
+                with_audio=with_audio,
+                with_file=with_file,
+                group_size=args.group_size,
+                batch_delay=args.batch_delay,
+                progress=not args.no_progress,
+                include_globs=include_globs,
+                exclude_globs=exclude_globs,
+                enable_zip=args.enable_zip,
+                zip_passwords=zip_passwords,
+                topic_id=args.topic_id,
+                max_retries=args.max_retries,
+                retry_delay=args.retry_delay,
+            )
+
+        for zip_file in zip_files:
+            if not zip_file.exists():
+                raise SystemExit(f"Zip file not found: {zip_file}")
+            await send_mixed_from_zip(
+                url_pool,
+                token_pool,
+                args.chat_id,
+                zip_file,
+                with_image=with_image,
+                with_video=with_video,
+                with_audio=with_audio,
+                with_file=with_file,
+                group_size=args.group_size,
+                batch_delay=args.batch_delay,
+                progress=not args.no_progress,
+                include_globs=include_globs,
+                exclude_globs=exclude_globs,
+                zip_passwords=zip_passwords,
+                topic_id=args.topic_id,
                 max_retries=args.max_retries,
                 retry_delay=args.retry_delay,
             )

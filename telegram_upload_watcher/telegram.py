@@ -470,6 +470,26 @@ def _matches_exclude(rel_path: str, patterns: list[str]) -> bool:
     return False
 
 
+def _mixed_send_type(
+    name: str,
+    *,
+    with_image: bool,
+    with_video: bool,
+    with_audio: bool,
+    with_file: bool,
+) -> str | None:
+    lower = name.lower()
+    if with_image and lower.endswith(IMAGE_EXTENSIONS):
+        return "image"
+    if with_video and lower.endswith(VIDEO_EXTENSIONS):
+        return "video"
+    if with_audio and lower.endswith(AUDIO_EXTENSIONS):
+        return "audio"
+    if with_file:
+        return "file"
+    return None
+
+
 def _collect_image_files(
     image_dir: Path,
     include_globs: list[str],
@@ -522,6 +542,25 @@ def _collect_files(
                 path = Path(root) / filename
                 if path.is_file():
                     files.append(path)
+    return files
+
+
+def _collect_source_files(
+    root_dir: Path,
+    include_globs: list[str],
+    exclude_globs: list[str],
+) -> list[Path]:
+    files: list[Path] = []
+    for root, _, filenames in os.walk(root_dir):
+        for filename in filenames:
+            rel_path = str(Path(root).relative_to(root_dir) / filename)
+            if not _matches_include(rel_path, include_globs):
+                continue
+            if _matches_exclude(rel_path, exclude_globs):
+                continue
+            path = Path(root) / filename
+            if path.is_file():
+                files.append(path)
     return files
 
 
@@ -660,6 +699,487 @@ async def send_images_from_dir(
     _print_summary(
         "image",
         str(image_dir),
+        started_at,
+        finished_at,
+        elapsed_seconds,
+        sent,
+        skipped,
+        sent_bytes,
+    )
+
+
+async def send_mixed_from_paths(
+    url_pool: UrlPool,
+    token_pool: TokenPool,
+    chat_id: str,
+    paths: list[Path],
+    *,
+    source_label: str,
+    with_image: bool,
+    with_video: bool,
+    with_audio: bool,
+    with_file: bool,
+    group_size: int = 4,
+    batch_delay: int = 3,
+    progress: bool = True,
+    include_globs: list[str] | None = None,
+    exclude_globs: list[str] | None = None,
+    enable_zip: bool = False,
+    zip_passwords: list[str] | None = None,
+    topic_id: int | None = None,
+    max_retries: int = 3,
+    retry_delay: int = 3,
+) -> None:
+    include_globs = include_globs or []
+    exclude_globs = exclude_globs or []
+    zip_passwords = zip_passwords or []
+
+    entries: list[Path] = []
+    zip_entries: set[Path] = set()
+    for path in paths:
+        rel_name = path.name
+        if include_globs and not _matches_include(rel_name, include_globs):
+            continue
+        if _matches_exclude(rel_name, exclude_globs):
+            continue
+        if enable_zip and path.name.lower().endswith(".zip"):
+            entries.append(path)
+            zip_entries.add(path)
+            continue
+        send_type = _mixed_send_type(
+            path.name,
+            with_image=with_image,
+            with_video=with_video,
+            with_audio=with_audio,
+            with_file=with_file,
+        )
+        if send_type:
+            entries.append(path)
+
+    if not entries:
+        logging.info("No matching files found in %s", source_label)
+        return
+
+    started_at = datetime.now()
+    started_clock = time.monotonic()
+    sent = 0
+    skipped = 0
+    sent_bytes = 0
+    await send_message(
+        url_pool,
+        token_pool,
+        chat_id,
+        f"Starting mixed upload from {source_label}: {len(entries)} file(s) at {_format_timestamp(started_at)}",
+        topic_id=topic_id,
+        max_retries=max_retries,
+        retry_delay=retry_delay,
+    )
+
+    iterator = tqdm.tqdm(entries) if progress else entries
+    media_files: list[tuple[str, bytes]] = []
+    batch_bytes = 0
+    for path in iterator:
+        if path in zip_entries:
+            if media_files:
+                await send_media_group(
+                    url_pool,
+                    token_pool,
+                    chat_id,
+                    media_files,
+                    topic_id=topic_id,
+                    max_retries=max_retries,
+                    retry_delay=retry_delay,
+                )
+                sent += len(media_files)
+                sent_bytes += batch_bytes
+                media_files = []
+                batch_bytes = 0
+                await asyncio.sleep(batch_delay)
+            await send_mixed_from_zip(
+                url_pool,
+                token_pool,
+                chat_id,
+                path,
+                with_image=with_image,
+                with_video=with_video,
+                with_audio=with_audio,
+                with_file=with_file,
+                group_size=group_size,
+                batch_delay=batch_delay,
+                progress=progress,
+                include_globs=include_globs,
+                exclude_globs=exclude_globs,
+                zip_passwords=zip_passwords,
+                topic_id=topic_id,
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+            )
+            continue
+
+        send_type = _mixed_send_type(
+            path.name,
+            with_image=with_image,
+            with_video=with_video,
+            with_audio=with_audio,
+            with_file=with_file,
+        )
+        if not send_type:
+            continue
+
+        if send_type == "image":
+            try:
+                data = path.read_bytes()
+            except OSError as exc:
+                logging.warning("Failed to read %s: %s", path, exc)
+                skipped += 1
+                continue
+            media_files.append((path.name, data))
+            batch_bytes += len(data)
+            if len(media_files) >= group_size:
+                await send_media_group(
+                    url_pool,
+                    token_pool,
+                    chat_id,
+                    media_files,
+                    topic_id=topic_id,
+                    max_retries=max_retries,
+                    retry_delay=retry_delay,
+                )
+                sent += len(media_files)
+                sent_bytes += batch_bytes
+                media_files = []
+                batch_bytes = 0
+                await asyncio.sleep(batch_delay)
+            continue
+
+        if media_files:
+            await send_media_group(
+                url_pool,
+                token_pool,
+                chat_id,
+                media_files,
+                topic_id=topic_id,
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+            )
+            sent += len(media_files)
+            sent_bytes += batch_bytes
+            media_files = []
+            batch_bytes = 0
+            await asyncio.sleep(batch_delay)
+
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            logging.warning("Failed to read %s: %s", path, exc)
+            skipped += 1
+            continue
+        await _send_single_file(
+            url_pool,
+            token_pool,
+            chat_id,
+            send_type,
+            path.name,
+            data,
+            topic_id=topic_id,
+            max_retries=max_retries,
+            retry_delay=retry_delay,
+        )
+        sent += 1
+        sent_bytes += len(data)
+        await asyncio.sleep(batch_delay)
+
+    if media_files:
+        await send_media_group(
+            url_pool,
+            token_pool,
+            chat_id,
+            media_files,
+            topic_id=topic_id,
+            max_retries=max_retries,
+            retry_delay=retry_delay,
+        )
+        sent += len(media_files)
+        sent_bytes += batch_bytes
+
+    elapsed_seconds = time.monotonic() - started_clock
+    avg_seconds = elapsed_seconds / sent if sent > 0 else 0.0
+    finished_at = datetime.now()
+    await send_message(
+        url_pool,
+        token_pool,
+        chat_id,
+        "Completed mixed upload from %s at %s (elapsed %s, avg/item %s, total %s, avg %s, sent %d, skipped %d)"
+        % (
+            source_label,
+            _format_timestamp(finished_at),
+            _format_duration(elapsed_seconds),
+            _format_duration(avg_seconds),
+            _format_bytes(sent_bytes),
+            _format_speed(sent_bytes, elapsed_seconds),
+            sent,
+            skipped,
+        ),
+        topic_id=topic_id,
+        max_retries=max_retries,
+        retry_delay=retry_delay,
+    )
+    _print_summary(
+        "mixed",
+        source_label,
+        started_at,
+        finished_at,
+        elapsed_seconds,
+        sent,
+        skipped,
+        sent_bytes,
+    )
+
+
+async def send_mixed_from_dir(
+    url_pool: UrlPool,
+    token_pool: TokenPool,
+    chat_id: str,
+    root_dir: Path,
+    *,
+    with_image: bool,
+    with_video: bool,
+    with_audio: bool,
+    with_file: bool,
+    group_size: int = 4,
+    batch_delay: int = 3,
+    progress: bool = True,
+    include_globs: list[str] | None = None,
+    exclude_globs: list[str] | None = None,
+    enable_zip: bool = False,
+    zip_passwords: list[str] | None = None,
+    topic_id: int | None = None,
+    max_retries: int = 3,
+    retry_delay: int = 3,
+) -> None:
+    include_globs = include_globs or []
+    exclude_globs = exclude_globs or []
+    files = _collect_source_files(root_dir, include_globs, exclude_globs)
+    if not files:
+        logging.info("No matching files found in %s", root_dir)
+        return
+    await send_mixed_from_paths(
+        url_pool,
+        token_pool,
+        chat_id,
+        files,
+        source_label=str(root_dir),
+        with_image=with_image,
+        with_video=with_video,
+        with_audio=with_audio,
+        with_file=with_file,
+        group_size=group_size,
+        batch_delay=batch_delay,
+        progress=progress,
+        include_globs=[],
+        exclude_globs=[],
+        enable_zip=enable_zip,
+        zip_passwords=zip_passwords,
+        topic_id=topic_id,
+        max_retries=max_retries,
+        retry_delay=retry_delay,
+    )
+
+
+async def send_mixed_from_zip(
+    url_pool: UrlPool,
+    token_pool: TokenPool,
+    chat_id: str,
+    zip_file: Path,
+    *,
+    with_image: bool,
+    with_video: bool,
+    with_audio: bool,
+    with_file: bool,
+    group_size: int = 4,
+    batch_delay: int = 3,
+    progress: bool = True,
+    include_globs: list[str] | None = None,
+    exclude_globs: list[str] | None = None,
+    zip_passwords: list[str] | None = None,
+    topic_id: int | None = None,
+    max_retries: int = 3,
+    retry_delay: int = 3,
+) -> None:
+    include_globs = include_globs or []
+    exclude_globs = exclude_globs or []
+    zip_passwords = zip_passwords or []
+
+    try:
+        zip_ref = _open_zip_with_passwords(zip_file, zip_passwords)
+    except RuntimeError as exc:
+        await send_message(
+            url_pool,
+            token_pool,
+            chat_id,
+            f"Skipping zip (passwords failed): {zip_file.name}",
+            topic_id=topic_id,
+            max_retries=max_retries,
+            retry_delay=retry_delay,
+        )
+        logging.warning("%s", exc)
+        return
+
+    with zip_ref:
+        entries: list[str] = []
+        for info in zip_ref.infolist():
+            if info.is_dir():
+                continue
+            name = info.filename
+            if not _matches_include(name, include_globs):
+                continue
+            if _matches_exclude(name, exclude_globs):
+                continue
+            send_type = _mixed_send_type(
+                name,
+                with_image=with_image,
+                with_video=with_video,
+                with_audio=with_audio,
+                with_file=with_file,
+            )
+            if send_type:
+                entries.append(name)
+
+        if not entries:
+            logging.info("No matching files found in %s", zip_file)
+            return
+
+        started_at = datetime.now()
+        started_clock = time.monotonic()
+        sent = 0
+        skipped = 0
+        sent_bytes = 0
+        await send_message(
+            url_pool,
+            token_pool,
+            chat_id,
+            f"Starting mixed upload from {zip_file.name}: {len(entries)} file(s) at {_format_timestamp(started_at)}",
+            topic_id=topic_id,
+            max_retries=max_retries,
+            retry_delay=retry_delay,
+        )
+
+        iterator = tqdm.tqdm(entries) if progress else entries
+        media_files: list[tuple[str, bytes]] = []
+        batch_bytes = 0
+        for name in iterator:
+            send_type = _mixed_send_type(
+                name,
+                with_image=with_image,
+                with_video=with_video,
+                with_audio=with_audio,
+                with_file=with_file,
+            )
+            if not send_type:
+                continue
+            if send_type == "image":
+                try:
+                    with zip_ref.open(name) as handle:
+                        data = handle.read()
+                except OSError as exc:
+                    logging.warning("Failed to read %s from %s: %s", name, zip_file, exc)
+                    skipped += 1
+                    continue
+                media_files.append((Path(name).name, data))
+                batch_bytes += len(data)
+                if len(media_files) >= group_size:
+                    await send_media_group(
+                        url_pool,
+                        token_pool,
+                        chat_id,
+                        media_files,
+                        topic_id=topic_id,
+                        max_retries=max_retries,
+                        retry_delay=retry_delay,
+                    )
+                    sent += len(media_files)
+                    sent_bytes += batch_bytes
+                    media_files = []
+                    batch_bytes = 0
+                    await asyncio.sleep(batch_delay)
+                continue
+
+            if media_files:
+                await send_media_group(
+                    url_pool,
+                    token_pool,
+                    chat_id,
+                    media_files,
+                    topic_id=topic_id,
+                    max_retries=max_retries,
+                    retry_delay=retry_delay,
+                )
+                sent += len(media_files)
+                sent_bytes += batch_bytes
+                media_files = []
+                batch_bytes = 0
+                await asyncio.sleep(batch_delay)
+
+            try:
+                with zip_ref.open(name) as handle:
+                    data = handle.read()
+            except OSError as exc:
+                logging.warning("Failed to read %s from %s: %s", name, zip_file, exc)
+                skipped += 1
+                continue
+            await _send_single_file(
+                url_pool,
+                token_pool,
+                chat_id,
+                send_type,
+                Path(name).name,
+                data,
+                topic_id=topic_id,
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+            )
+            sent += 1
+            sent_bytes += len(data)
+            await asyncio.sleep(batch_delay)
+
+        if media_files:
+            await send_media_group(
+                url_pool,
+                token_pool,
+                chat_id,
+                media_files,
+                topic_id=topic_id,
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+            )
+            sent += len(media_files)
+            sent_bytes += batch_bytes
+
+    elapsed_seconds = time.monotonic() - started_clock
+    avg_seconds = elapsed_seconds / sent if sent > 0 else 0.0
+    finished_at = datetime.now()
+    await send_message(
+        url_pool,
+        token_pool,
+        chat_id,
+        "Completed mixed upload from %s at %s (elapsed %s, avg/item %s, total %s, avg %s, sent %d, skipped %d)"
+        % (
+            zip_file.name,
+            _format_timestamp(finished_at),
+            _format_duration(elapsed_seconds),
+            _format_duration(avg_seconds),
+            _format_bytes(sent_bytes),
+            _format_speed(sent_bytes, elapsed_seconds),
+            sent,
+            skipped,
+        ),
+        topic_id=topic_id,
+        max_retries=max_retries,
+        retry_delay=retry_delay,
+    )
+    _print_summary(
+        "mixed",
+        zip_file.name,
         started_at,
         finished_at,
         elapsed_seconds,

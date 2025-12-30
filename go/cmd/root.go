@@ -25,6 +25,7 @@ func newRootCmd(version string, buildTime string, gitCommit string) *cobra.Comma
 	cmd.AddCommand(newSendFileCmd())
 	cmd.AddCommand(newSendVideoCmd())
 	cmd.AddCommand(newSendAudioCmd())
+	cmd.AddCommand(newSendMixedCmd())
 	cmd.AddCommand(newWatchCmd())
 	cmd.AddCommand(newVersionCmd(version, buildTime, gitCommit))
 	return cmd
