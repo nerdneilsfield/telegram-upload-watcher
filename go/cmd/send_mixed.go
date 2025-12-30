@@ -340,7 +340,6 @@ func sendMixedFromPaths(client *telegram.Client, chatID string, topicID *int, so
 				progressState.Print(processed, sent, skipped, false)
 				continue
 			}
-			sourceBytes := int64(len(data))
 			prepared, err := prepareImageMedia(data, filepath.Base(entry.path), maxDimension, maxBytes, pngStartLevel)
 			if err != nil {
 				log.Printf("invalid image %s: %v", filepath.Base(entry.path), err)
@@ -350,7 +349,7 @@ func sendMixedFromPaths(client *telegram.Client, chatID string, topicID *int, so
 				continue
 			}
 			media = append(media, prepared)
-			batchBytes += sourceBytes
+			batchBytes += int64(len(prepared.Data))
 			if len(media) >= groupSize {
 				flushImages()
 			}
@@ -500,7 +499,6 @@ func sendMixedFromZip(client *telegram.Client, chatID string, topicID *int, zipP
 				progressState.Print(processed, sent, skipped, false)
 				continue
 			}
-			sourceBytes := int64(len(data))
 			prepared, err := prepareImageMedia(data, filepath.Base(name), maxDimension, maxBytes, pngStartLevel)
 			if err != nil {
 				log.Printf("invalid image %s: %v", filepath.Base(name), err)
@@ -510,7 +508,7 @@ func sendMixedFromZip(client *telegram.Client, chatID string, topicID *int, zipP
 				continue
 			}
 			media = append(media, prepared)
-			batchBytes += sourceBytes
+			batchBytes += int64(len(prepared.Data))
 			if len(media) >= groupSize {
 				flushImages()
 			}

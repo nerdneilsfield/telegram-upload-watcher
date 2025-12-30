@@ -195,7 +195,6 @@ func sendImagesFromDir(client *telegram.Client, chatID string, topicID *int, dir
 			progressState.Print(processed, sent, skipped, false)
 			continue
 		}
-		sourceBytes := int64(len(data))
 		prepared, err := prepareImageMedia(data, filepath.Base(path), maxDimension, maxBytes, pngStartLevel)
 		if err != nil {
 			log.Printf("invalid image %s: %v", filepath.Base(path), err)
@@ -205,7 +204,7 @@ func sendImagesFromDir(client *telegram.Client, chatID string, topicID *int, dir
 			continue
 		}
 		media = append(media, prepared)
-		batchBytes += sourceBytes
+		batchBytes += int64(len(prepared.Data))
 		if len(media) >= groupSize {
 			if err := client.SendMediaGroup(chatID, media, topicID, retry); err != nil {
 				log.Printf("send media group failed: %v", err)
@@ -342,7 +341,6 @@ func sendImagesFromZip(client *telegram.Client, chatID string, topicID *int, zip
 			progressState.Print(processed, sent, skipped, false)
 			continue
 		}
-		sourceBytes := int64(len(data))
 		prepared, err := prepareImageMedia(data, filepath.Base(name), maxDimension, maxBytes, pngStartLevel)
 		if err != nil {
 			log.Printf("invalid image %s: %v", filepath.Base(name), err)
@@ -352,7 +350,7 @@ func sendImagesFromZip(client *telegram.Client, chatID string, topicID *int, zip
 			continue
 		}
 		media = append(media, prepared)
-		batchBytes += sourceBytes
+		batchBytes += int64(len(prepared.Data))
 		if len(media) >= groupSize {
 			if err := client.SendMediaGroup(chatID, media, topicID, retry); err != nil {
 				log.Printf("send media group failed: %v", err)
